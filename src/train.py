@@ -18,7 +18,8 @@ valgen = dp.chessgen(X_before_test, X_after_test, selection_labels=True,
                      movement_labels=False, split=12, batch_size=32,
                      shuffle=True)
 
-optimizer = SGD(lr=0.005, momentum=0.9, decay=0.98, nesterov=True)
+# optimizer = SGD(lr=0.005, momentum=0.9, decay=0.98, nesterov=True)
+optimizer = None
 
 # This will save the best scoring model weights to the parent directory
 best_model_file = '../models/relu3layer_weights.h5'
