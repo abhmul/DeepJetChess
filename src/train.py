@@ -30,13 +30,14 @@ best_model = ModelCheckpoint(best_model_file, monitor='val_acc', verbose=1, save
 model = model_func(optimizer=optimizer)
 
 def scheduler(epoch):
-	if epoch == 100:
-		model.lr.set_value(0.01)
-	elif epoch == 500:
-		model.lr.set_value(0.001)
-	elif epoch == 1000:
-		model.lr.set_value(0.0001)
-	return model.lr.get_value()
+	if epoch < 100:
+		return float(0.001)
+	elif epoch < 500:
+		return float(0.01)
+	elif epoch < 1000:
+		return float(0.001)
+	else:
+		return float(0.0001)
 
 change_lr = LearningRateScheduler(scheduler)
 
