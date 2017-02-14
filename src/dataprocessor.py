@@ -121,11 +121,13 @@ def select_labels(selections, movements, selection_labels, movement_labels):
     return y
 
 
-def chessgen(X_before, X_after, selection_labels=True, movement_labels=True, split=12, batch_size=32, shuffle=True):
+def chessgen(X_before, X_after, selection_labels=True, movement_labels=True, split=12, batch_size=32, shuffle=True, debug=False):
     """
     A generator for a keras NN
     Yields a tuple of boards 
     """
+    if debug:
+        batch_size = 1
     inds = np.arange(X_before.shape[0])
     while True:
         # Shuffle if we need to
@@ -134,12 +136,12 @@ def chessgen(X_before, X_after, selection_labels=True, movement_labels=True, spl
         for i in xrange(0, len(inds), batch_size):
             # Get the batch of boards
             x_batch = X_before[inds[i:i+batch_size]]
+            if debug: print('Board pre-move:\n{}'.format(x_batch[0]))
             # Get the labels for the boards
             selections, movements = get_labels(x_batch, X_after[inds[i:i+batch_size]])
+            if debug: print('Board post-move:\n{}'.format(X_after[inds[i:i+batch_size]][0]))
             # Split the boards into the different piece boards
             x_batch = split_boards(x_batch, split)
-            # assert(x_batch.shape[1:] == (8, 8, split))
-            # print('Good batch: {}'.format(x_batch.shape))
             # Make the labels
             y_batch = select_labels(selections, movements, selection_labels, movement_labels)
             

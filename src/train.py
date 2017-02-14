@@ -1,5 +1,5 @@
 from sklearn.model_selection import train_test_split
-from keras.callbacks import ModelCheckpoint
+from keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from keras.optimizers import SGD
 import dataprocessor as dp
 import models
@@ -18,8 +18,9 @@ valgen = dp.chessgen(X_before_test, X_after_test, selection_labels=True,
                      movement_labels=False, split=12, batch_size=32,
                      shuffle=True)
 
-# optimizer = SGD(lr=0.005, momentum=0.9, decay=0.98, nesterov=True)
-optimizer = None
+optimizer = SGD(lr=0.001, momentum=0.9, nesterov=True)
+
+# optimizer = None
 
 # This will save the best scoring model weights to the parent directory
 best_model_file = '../models/conv10layer_weights.h5'
@@ -27,8 +28,20 @@ best_model = ModelCheckpoint(best_model_file, monitor='val_acc', verbose=1, save
                              save_weights_only=True)
 
 model = model_func(optimizer=optimizer)
+
+def scheduler(epoch):
+	if epoch == 100:
+		model.lr.set_value(0.01)
+	elif epoch == 500:
+		model.lr.set_value(0.001)
+	elif epoch == 1000:
+		model.lr.set_value(0.0001)
+	return model.lr.get_value()
+
+change_lr = LearningRateScheduler(scheduler)
+
 fit = model.fit_generator(traingen, samples_per_epoch=X_before_train.shape[0],
-                          nb_epoch=100, verbose=1, callbacks=[best_model],
+                          nb_epoch=1000, verbose=1, callbacks=[best_model, change_lr],
                           validation_data=valgen, nb_val_samples=X_before_test.shape[0])
 
 if graphing:
