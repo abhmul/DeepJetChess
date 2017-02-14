@@ -24,7 +24,7 @@ optimizer = SGD(lr=0.001, momentum=0.9, nesterov=True)
 
 # This will save the best scoring model weights to the parent directory
 best_model_file = '../models/conv10layer_weights.h5'
-best_model = ModelCheckpoint(best_model_file, monitor='val_acc', verbose=1, save_best_only=True,
+best_model = ModelCheckpoint(best_model_file, monitor='val_acc', mode='max', verbose=1, save_best_only=True,
                              save_weights_only=True)
 
 model = model_func(optimizer=optimizer)
