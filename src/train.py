@@ -4,7 +4,7 @@ from keras.optimizers import SGD
 import dataprocessor as dp
 import models
 
-model_func = models.conv10layer
+model_func = models.relu3layer
 graphing = True
 
 fn_in = '../chess_games_2016.h5'
@@ -18,10 +18,10 @@ valgen = dp.chessgen(X_before_test, X_after_test, selection_labels=True,
                      movement_labels=False, split=12, batch_size=32,
                      shuffle=True)
 
-optimizer = SGD(lr=0.01, momentum=0.9, decay=0.98, nesterov=True)
+optimizer = SGD(lr=0.005, momentum=0.9, decay=0.98, nesterov=True)
 
 # This will save the best scoring model weights to the parent directory
-best_model_file = '../models/conv10layer_weights.h5'
+best_model_file = '../models/relu3layer_weights.h5'
 best_model = ModelCheckpoint(best_model_file, monitor='val_acc', verbose=1, save_best_only=True,
                              save_weights_only=True)
 
