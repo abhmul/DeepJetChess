@@ -1,5 +1,3 @@
-import os
-import pandas as pd
 import numpy as np
 import h5py
 
@@ -10,13 +8,15 @@ def switch_sides(X_game):
     return -1 * X_game[:, ::-1, ...]
 
 
-def load_h5(fn_in, shuffle=True):
+def load_h5(fn_in, shuffle=True, exclude_n=0, random_seed=None):
     """
     Splits the board array into one for the winner and one for post-move
     """
+    if random_seed is not None:
+        np.random_seed(random_seed)
     h5f = h5py.File(fn_in, 'r')
     # Load the data
-    X, M, W = [h5f[group][()] for group in ('X', 'M', 'W')]
+    X, M, W = [h5f[group] if group == 'X' else h5f[group][()] for group in ('X', 'M', 'W')]
     # Make sure that we have the same number of boards as we do moves.
     assert(X.shape[0] == M.shape[0])
     print('%s moves in dataset' % X.shape[0])
@@ -36,6 +36,15 @@ def load_h5(fn_in, shuffle=True):
         start_ind = 0 if i == 0 else end_inds[i-1] + 1
         # Get the indices of the winner's turn moves and post_move and add to array
         winner_moves = start_ind + np.where(M[start_ind:end_ind] == winner)[0]
+        # Exclude the first exclude_n moves
+        if exclude_n > 0:
+            winner_moves = winner_moves[exclude_n:]
+            # If the game did not last longer than the first
+            # exclude_n moves, skip it
+            if len(winner_moves) == 0:
+                continue
+            # Modify the start ind to not include the excluded moves
+            start_ind = winner_moves[0]
         turn_inds.append(winner_moves)
         moved_inds.append(winner_moves + 1)
         # If black is the winner, we need to switch sides
@@ -75,7 +84,7 @@ def split6(X_board):
     Player is 1 and enemy is -1
     """
     X = np.empty(X_board.shape[:3] + (6,))
-    for pieceval in xrange(1,7):
+    for pieceval in range(1,7):
         # Select the squares with the specified piece
         X[:, :, :, pieceval-1] = ((X_board == pieceval).astype(np.float32) + -1 * (X_board == -1*pieceval).astype(np.float32))
     return X
@@ -87,11 +96,11 @@ def split12(X_board):
     """
     X = np.empty(X_board.shape[:3] + (12,))
     # Do the player pieces first
-    for pieceval in xrange(1, 7):
+    for pieceval in range(1, 7):
         # Select the squares with the specified piece
         X[:, :, :, pieceval-1] = (X_board == pieceval).astype(np.float32)
     # Next do the enemy pieces
-    for pieceval in xrange(-1, -7, -1):
+    for pieceval in range(-1, -7, -1):
         # Select the squares with the specified piece
         X[:, :, :, -1*pieceval + 5] = (X_board == pieceval).astype(np.float32)
     return X
@@ -124,7 +133,7 @@ def select_labels(selections, movements, selection_labels, movement_labels):
 def chessgen(X_before, X_after, selection_labels=True, movement_labels=True, split=12, batch_size=32, shuffle=True, debug=False):
     """
     A generator for a keras NN
-    Yields a tuple of boards 
+    Yields a tuple of boards
     """
     if debug:
         batch_size = 1
@@ -133,7 +142,7 @@ def chessgen(X_before, X_after, selection_labels=True, movement_labels=True, spl
         # Shuffle if we need to
         if shuffle:
             np.random.shuffle(inds)
-        for i in xrange(0, len(inds), batch_size):
+        for i in range(0, len(inds), batch_size):
             # Get the batch of boards
             x_batch = X_before[inds[i:i+batch_size]]
             if debug: print('Board pre-move:\n{}'.format(x_batch[0]))
@@ -144,7 +153,7 @@ def chessgen(X_before, X_after, selection_labels=True, movement_labels=True, spl
             x_batch = split_boards(x_batch, split)
             # Make the labels
             y_batch = select_labels(selections, movements, selection_labels, movement_labels)
-            
+
             yield x_batch, y_batch
 
 class TestProcessingMethods(tst.TestCase):
@@ -196,7 +205,7 @@ class TestProcessingMethods(tst.TestCase):
                             [ 1, 1, 1, 0, 5, 1, 1, 1],
                             [ 4, 0, 3, 0, 6, 0, 0, 4]]])
 
-        afters =  np.array([[[-4, -2, -3, -5, -6, -3, -2, -4],
+        afters = np.array([[[-4, -2, -3, -5, -6, -3, -2, -4],
                             [-1, -1, -1, -1, -1, -1, -1, -1,],
                             [ 0, 0, 0, 0, 0, 0, 0, 0],
                             [ 0, 0, 0, 0, 0, 0, 0, 0],
@@ -289,6 +298,7 @@ class TestProcessingMethods(tst.TestCase):
 
         np.testing.assert_array_equal(expected12[0], split_boards(boards, 12)[0])
         np.testing.assert_array_equal(expected6[0], split_boards(boards, 6)[0])
+
 
 if __name__ == '__main__':
     tst.main()

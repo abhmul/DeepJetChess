@@ -1,15 +1,14 @@
 from __future__ import division, print_function
 import numpy as np
-import chess, chess.pgn
+import chess
+import chess.pgn
 import h5py
 
 import unittest as tst
 
-data_fn = '../ficsgamesdb_201601_standard2000_nomovetimes_1416857.pgn'
-
 def read_games(fn):
     """
-    A generator that generates every game in 
+    A generator that generates every game in
     the .pgn file
     """
     f = open(fn)
@@ -29,9 +28,7 @@ def read_games(fn):
 
 
 def build_game(game):
-    """
-    Returns a list of all the boards in order in a game
-    """
+    """Returns a list of all the boards in order in a game"""
     gn = game.end()
     game_boards = []
     # Loop through the game boards from end to start
@@ -56,9 +53,9 @@ def b2array(board):
     # These are characters in the string not part of the actual board
     non_squares = {' ', '\n'}
     # These are our replacement values for each piece
-    subs = {'.': 0, 'P': 1, 'R': 4, 'N': 2, 'B': 3, 'Q': 5, 'K': 6, 'p': -1, 'r': -4, 'n': -2, 
+    subs = {'.': 0, 'P': 1, 'R': 4, 'N': 2, 'B': 3, 'Q': 5, 'K': 6, 'p': -1, 'r': -4, 'n': -2,
             'b': -3, 'q': -5, 'k': -6}
-    
+
     # Now loop over all the characters and fill in the matrix
     for piece in board:
         # If the piece is non-square, skip over it
@@ -69,7 +66,8 @@ def b2array(board):
             x[pos[0], pos[1]] = subs[piece]
         # Update the position to the next square
         pos[1] = (pos[1] + 1) % 8
-        if not pos[1]: pos[0] += 1
+        if not pos[1]:
+            pos[0] += 1
     return x
 
 def extract_gdata(game):
@@ -82,34 +80,34 @@ def extract_gdata(game):
     # First we find the winner of the game
     results = {'1-0': 1, '0-1': -1, '1/2-1/2': 0}
     game_result = game.headers['Result']
-    # If we have a normal result, 
+    # If we have a normal result,
     if game_result in results:
         winner = results[game_result]
     else:
         print('Game had invalid result %s, continuing to next game' % game_result)
         return None
-    
+
     game_boards = build_game(game)
     # Create the move array and set the last move to 0
     move_arr = np.array([1 if board.turn else -1 for board in game_boards], dtype=np.int8)
     move_arr[-1] = 0
-    
+
     # Initialize the board ndarray.
     x = np.empty((move_arr.shape[0], 8, 8), dtype=np.int8)
     # Fill in the board ndarray
     for i, board in enumerate(game_boards):
         x[i] = b2array(str(board))
-    
+
     return x, move_arr, winner
 
 def to_h5(fname_in, fname_out):
-    
+
     # Iniitialize the datasets
     g = h5py.File(fname_out, 'w')
     X = g.create_dataset('X', (0, 8, 8), dtype='i8', maxshape=(None, 8, 8), chunks=True)
     M = g.create_dataset('M', (0,), dtype='i8', maxshape=(None,), chunks=True)
     W = g.create_dataset('W', (0,), dtype='b', maxshape=(None,), chunks=True)
-    
+
     move_size = 0
     moves = 0
     games = 0
@@ -123,30 +121,30 @@ def to_h5(fname_in, fname_out):
             x, move_arr, winner = extract_try
         else:
             continue
-        
+
         game_moves = len(move_arr)
-        
+
         # Resize the h5 file if we're gonna need more space for boards and turns
         while moves + game_moves >= move_size:
             g.flush()
             move_size = 2 * move_size + 1
             print('Resizing board and moves to %s' % move_size)
             [d.resize(size=move_size, axis=0) for d in (X, M)]
-        
+
         # Resize the h5 file if we're gonna need more space to store the winner
         while games + 1 >= game_size:
             g.flush()
             game_size = 2 * game_size + 1
             print('Resizing winners to %s' % game_size)
             W.resize(size=game_size, axis=0)
-        
+
         X[moves:moves+game_moves] = x
         M[moves:moves+game_moves] = move_arr
         W[games] = winner
-        
+
         moves += game_moves
         games += 1
-    
+
     # Resize down to if we overshot
     print('Final Size for boards and moves: %s' % moves)
     [d.resize(size=moves, axis=0) for d in (X, M)]
@@ -175,7 +173,7 @@ class TestBoardMethods(tst.TestCase):
                             [ 1, 1, 1, 1, 1, 1, 1, 1],
                             [ 4, 2, 3, 5, 6, 3, 2, 4]])
         np.testing.assert_array_equal(expected, b2array(start_board))
-        
+
         # Case 2: A mid-game board
         mid_board = 'r . b q . . k r' \
                     'p p p . . . p p' \
@@ -195,7 +193,8 @@ class TestBoardMethods(tst.TestCase):
                              [ 4, 0, 3, 0, 6, 0, 0, 4]])
         np.testing.assert_array_equal(expected, b2array(mid_board))
 
+
 if __name__ == '__main__':
+    data_fn = '../ficsgamesdb_2016_standard2000_nomovetimes_1443264.pgn'
     to_h5(data_fn, '../chess_games_2016.h5')
-        # tst.main()
-    
+    # tst.main()

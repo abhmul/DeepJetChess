@@ -1,0 +1,3 @@
+*.h5
+*.pgn
+src/__pycache__/*
