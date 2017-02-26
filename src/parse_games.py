@@ -3,8 +3,12 @@ import numpy as np
 import chess
 import chess.pgn
 import h5py
+from multiprocessing import Pool
 
 import unittest as tst
+
+import sys
+sys.setrecursionlimit(10000)
 
 def read_games(fn):
     """
@@ -112,11 +116,12 @@ def to_h5(fname_in, fname_out):
     moves = 0
     games = 0
     game_size = 0
+    game_reader = read_games(fname_in)
+    pool = Pool(processes=8)
 
     # Loop through every game
-    for game in read_games(fname_in):
+    for extract_try in pool.imap_unordered(extract_gdata, game_reader):
         # Try to extract the game data
-        extract_try = extract_gdata(game)
         if extract_try is not None:
             x, move_arr, winner = extract_try
         else:
@@ -195,6 +200,6 @@ class TestBoardMethods(tst.TestCase):
 
 
 if __name__ == '__main__':
-    data_fn = '../ficsgamesdb_2016_standard2000_nomovetimes_1443264.pgn'
-    to_h5(data_fn, '../chess_games_2016.h5')
+    data_fn = '../ficsgamesdb_2015_CvC_nomovetimes_1443974.pgn'
+    to_h5(data_fn, '../chess_games_cvc_2015.h5')
     # tst.main()

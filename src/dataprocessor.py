@@ -7,6 +7,19 @@ def switch_sides(X_game):
     # Flip the boards and invert the pieces
     return -1 * X_game[:, ::-1, ...]
 
+def load_h5_multiple(*args, shuffle=False, exclude_n=0, random_seed=None):
+    if random_seed is not None:
+        np.random_seed(random_seed)
+
+    X_turn, X_moved = [], []
+    for fn_in in args:
+        X_i_turn, X_i_moved = load_h5(fn_in, shuffle=shuffle, exclude_n=exclude_n,
+                                      random_seed=np.random.randint(1, 10000))
+        X_turn.append(X_i_turn)
+        X_moved.append(X_i_moved)
+
+    return np.vstack(X_turn), np.vstack(X_moved)
+
 
 def load_h5(fn_in, shuffle=True, exclude_n=0, random_seed=None):
     """
@@ -16,7 +29,7 @@ def load_h5(fn_in, shuffle=True, exclude_n=0, random_seed=None):
         np.random_seed(random_seed)
     h5f = h5py.File(fn_in, 'r')
     # Load the data
-    X, M, W = [h5f[group] if group == 'X' else h5f[group][()] for group in ('X', 'M', 'W')]
+    X, M, W = [np.array(h5f[group], dtype=np.int8) for group in ('X', 'M', 'W')]
     # Make sure that we have the same number of boards as we do moves.
     assert(X.shape[0] == M.shape[0])
     print('%s moves in dataset' % X.shape[0])
@@ -63,7 +76,7 @@ def load_h5(fn_in, shuffle=True, exclude_n=0, random_seed=None):
 
     return X[turn_inds], X[moved_inds]
 
-def get_labels(X_before, X_after):
+def get_labels(X_before, X_after, debug=False):
     """
     Takes the winner boards pre-move and post-move
     and returns a tuple with the following elements
@@ -74,8 +87,16 @@ def get_labels(X_before, X_after):
     X_residual = X_before - X_after
     # Use the residual boards to find the selected piece
     selection = (X_residual > 0).astype(np.float32)
+    if debug: assert(np.sum(selection) in {1., 2.})
+    # If the move was a castle, normalize output
+    if np.sum(selection) == 2.:
+        selection /= 2.
     # And where it moved to
     movement = (X_residual < 0).astype(np.float32)
+    if debug: assert(np.sum(movement) in {1., 2.})
+    # If the move was a castle, normalize output
+    if np.sum(movement) == 2:
+        movement /= 2.
     return selection, movement
 
 def split6(X_board):
@@ -129,11 +150,23 @@ def select_labels(selections, movements, selection_labels, movement_labels):
         y = y[0]
     return y
 
+def build_prev_batch(x_current, prev_x, prev_boards):
+    # Infer the split
+    split = x_current.shape[-1]
+    # Split the previous boards into their seperate channels
+    prev_x = [split_boards(boards, split) for boards in prev_x]
+    # Initialize the new batch
+    x_new = np.empty(x_current.shape[:-1] + (split*prev_boards,))
+    for j, board in enumerate(x_current):
+        x_new[j] = np.concatenate([board] + [prev_pos[j] for prev_pos in prev_x], axis=2)
+    return x_new
 
-def chessgen(X_before, X_after, selection_labels=True, movement_labels=True, split=12, batch_size=32, shuffle=True, debug=False):
+
+def chessgen(X_before, X_after, selection_labels=True, movement_labels=True, split=12, prev_boards=0, batch_size=32, shuffle=True, debug=False):
     """
     A generator for a keras NN
     Yields a tuple of boards
+    if prev_boards is true, then the dataset should NOT be shuffled upon input
     """
     if debug:
         batch_size = 1
@@ -142,7 +175,7 @@ def chessgen(X_before, X_after, selection_labels=True, movement_labels=True, spl
         # Shuffle if we need to
         if shuffle:
             np.random.shuffle(inds)
-        for i in range(0, len(inds), batch_size):
+        for i in range(prev_boards, len(inds), batch_size):
             # Get the batch of boards
             x_batch = X_before[inds[i:i+batch_size]]
             if debug: print('Board pre-move:\n{}'.format(x_batch[0]))
@@ -151,6 +184,21 @@ def chessgen(X_before, X_after, selection_labels=True, movement_labels=True, spl
             if debug: print('Board post-move:\n{}'.format(X_after[inds[i:i+batch_size]][0]))
             # Split the boards into the different piece boards
             x_batch = split_boards(x_batch, split)
+
+            # Get all the previous boards and split them
+            if prev_boards:
+                # Alternate which side we pick the board from and flip if not winning side
+                prev_x = [X_after[inds[i-int((j+1)/2):i+batch_size-int((j+1)/2)]]
+                          if j % 2 else X_before[inds[i-int(j/2):i+batch_size-int(j/2)]]
+                          for j in range(1, prev_boards+1)]
+                if debug:
+                    for k in range(len(x_batch)):
+                        print("Printing previous moves for %s" % k)
+                        print(x_batch[k])
+                        for l in range(len(prev_x)):
+                            print(prev_x[l][k])
+                x_batch = build_prev_batch(x_batch, prev_x, prev_boards)
+
             # Make the labels
             y_batch = select_labels(selections, movements, selection_labels, movement_labels)
 
