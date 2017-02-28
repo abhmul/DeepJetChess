@@ -145,6 +145,51 @@ def pinned(board):
                 break
     return ret_arr.reshape((8, 8, 1))
 
+def threat_set(board, s):
+    """
+    Creates a SquareSet of squares where current player's pieces are
+    threatened by the piece at s
+
+    Arguments:
+    board -- the current game board state
+    s -- the square of the enemy piece
+
+    Returns:
+    A SquareSet with 1's where the player's pieces are threatened
+    """
+    return board.attacks(s) & board_pieces(board, board.turn)
+
+def is_fork(attacked_pieces):
+    """
+    Tells whether the attacking piece is forking something
+
+    Arguments:
+    attacked_pieces -- The SquareSet of pieces being attacked
+                       by the piece in question
+
+    Returns:
+    A boolean denoting whether a fork or not
+    """
+    # If the mask is a power of 2 or 0, it is not a fork
+    return not is_power2(attacked_pieces)
+
+def pin_check(board, attacked_pieces):
+    """
+    Tells whether the attacking piece is pinning another
+
+    Arguments:
+    attacked_pieces -- The SquareSet of pieces being attacked
+                       by the piece in question
+    board -- The current game board state
+
+    Returns:
+    A boolean denoting whether one of the attacked pieces is pinned
+    """
+    # Check all of the pieces being threatened
+    for s in square_gen(attacked_pieces):
+        if board.is_pinned(board.piece_at(s).color, s):
+            return True
+
 def is_power2(x):
     return not x & (x - 1)
 
@@ -164,20 +209,18 @@ def create_filters(gn, num_past, piece=True, moves=False):
         # Check if the move puts the enemy in check
         if board.is_check():
             pfilt[np.unravel_index(l.from_square), 1] = 1
-        # Find all the pieces attacked by that move
-        attacked_pieces = board.attacks(l.to_square) & board_pieces(board, board.turn)
+        # Find all of enemy's pieces threatened by move l
+        attacked_pieces = threat_set(board, l.to_square)
         # Check for threats to enemy
         if attacked_pieces:
             pfilt[np.unravel_index(l.from_square), 2] = 1
         # Check for forks
         # If the mask is a power of 2 or 0, it is not a fork
-        if not is_power2(attacked_pieces):
+        if is_fork(attacked_pieces):
             pfilt[np.unravel_index(l.from_square), 3] = 1
         # Check for pins
-        for s in square_gen(attacked_pieces):
-            if board.is_pinned(board.turn, s):
-                pfilt[np.unravel_index(l.from_square), 4] = 1
-                break
+        if pin_check(board, attacked_pieces):
+            pfilt[np.unravel_index(l.from_square), 4] = 1
         # Reset the board to the original
         board.pop()
     return pfilt
