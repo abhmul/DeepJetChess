@@ -1,7 +1,0 @@
-*.h5
-*.pgn
-src/__pycache__/*
-
-\.floydexpt
-
-\.floydignore
