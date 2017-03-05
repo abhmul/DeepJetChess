@@ -1,5 +1,34 @@
 from parse_games import read_games
+import chess
+import parse_games as pg
 import numpy as np
+from dataprocessor import split_boards
+import unittest as tst
+
+CASTLE_KING = np.array([[0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 1, 0, 0, 0]])
+QUEEN_CASTLE = np.array([[0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 1, 0, 0, 0, 0, 0]])
+KING_CASTLE = np.array([[0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 1, 0]])
 
 def unwind_games(pgn_fn):
     """
@@ -13,14 +42,23 @@ def unwind_games(pgn_fn):
     An array filled with GameNode objects for each move in each game
     """
     gn_arr = []
+    results = {'1-0': True, '0-1': False, '1/2-1/2': None}
     for gn in read_games(pgn_fn):
         # Ensure we are at the root of the game
         if not gn.starts_variation():
             gn = gn.root()
+        # Get the winner of the game
+        winner = results[gn.headers["Result"]]
+        # If tie, throw out the game
+        if winner is None:
+            continue
+        turn = True
         while gn.variations:
-            gn_arr.append(gn)
             # Go to the next move
             gn = gn.variations[0]
+            turn = not turn
+            if winner == turn:
+                gn_arr.append(gn)
     return np.array(gn_arr)
 
 def squares2array(square_set):
@@ -33,7 +71,7 @@ def squares2array(square_set):
     Returns:
     An 8 x 8 numpy array with 1's in the selected squares and 0 Otherwise
     """
-    return (np.fromstring(bin(square_set.mask)[2:], np.int8) - 48).reshape((8, 8))
+    return np.fliplr((np.fromstring(format(square_set.mask, '064b'), np.int8) - 48).reshape((8, 8)))
 
 def b2array(board):
     """
@@ -48,11 +86,35 @@ def b2array(board):
     locations on an 8 x 8 chess board
     """
     ret_arr = np.zeros((8, 8, 12), np.int8)
-    for c in range(1):
+    for c in range(2):
         for p in range(1,7):
             ind = c * 6 + (p - 1)
-            ret_arr[:, :, ind] = squares2array(board.pieces(p, c))
+            # We want to start with white first for consistency (not c)
+            ret_arr[:, :, ind] = squares2array(board.pieces(p, not c))
     return ret_arr
+
+def array2b(arr):
+    """
+    Turns an 8 x 8 x 12 array into Board object with white's Turns. Useful
+    for testing and visualizing
+
+    Arguments:
+    arr -- the array to turn into a board
+
+    Returns:
+    A Board object that has the position of the pieces encoded, but no other
+    info.
+    """
+    board = chess.Board(fen=None)
+    for p in range(1,7):
+        bslice = np.flipud(arr[:, :, p-1])
+        for s in np.flatnonzero(bslice):
+            board.set_piece_at(s, chess.Piece(p, True))
+
+        bslice = np.flipud(arr[:, :, p+5])
+        for s in 1*(np.flatnonzero(bslice) - 64):
+            board.set_piece_at(s, chess.Piece(p, False))
+    return board
 
 def past_moves(gn, num_past):
     """
@@ -68,11 +130,14 @@ def past_moves(gn, num_past):
     the past moves
     """
     past_move_arr = np.empty((8, 8, num_past * 12), np.int8)
+    # print('before: ', past_move_arr.shape)
     for i in range(num_past):
         # Figure out a more efficient way translate to array
+        # print(gn.board())
         past_move_arr[:, :, i*12: (i+1)*12] = b2array(gn.board())
         if gn.parent is not None:
             gn = gn.parent
+    # print('after: ', past_move_arr.shape)
     return past_move_arr
 
 def board_pieces(board, color):
@@ -87,7 +152,7 @@ def board_pieces(board, color):
     Returns:
     A squareset that has data on the positions of all of the pieces
     """
-    return board.occupied_co[color]
+    return chess.SquareSet(board.occupied_co[color])
 
 def square_gen(square_set):
     """
@@ -100,7 +165,7 @@ def square_gen(square_set):
     Returns:
     A generator that yields the index id of each square we wanted
     """
-    return (i for i in range(64) if bin(square_set.mask)[2:][i] == '1')
+    return (i for i in range(64) if format(square_set.mask, '064b')[-i-1] == '1')
 
 def capture(board, threat=True):
     """
@@ -114,15 +179,15 @@ def capture(board, threat=True):
     Returns:
     An 8 x 8 x 1 array with 1's where identified pieces are
     """
-    enem_squares = board_pieces(board, not board.turn)
     ret_arr = np.zeros((64,), np.int8)
     for s in square_gen(board_pieces(board, board.turn)):
         if threat:
-            attacked = enem_squares & board.attackers(s)
+            attacked = board.attackers(not board.turn, s)
         else:
+            enem_squares = board_pieces(board, not board.turn)
             attacked = enem_squares & board.attacks(s)
         ret_arr[s] = 1 if attacked else 0
-    return ret_arr.reshape((8, 8, 1))
+    return np.flipud(ret_arr.reshape((8, 8, 1)))
 
 def pinned(board):
     """
@@ -143,7 +208,7 @@ def pinned(board):
             if board.is_pinned(board.turn, s):
                 ret_arr[s] = 1
                 break
-    return ret_arr.reshape((8, 8, 1))
+    return np.flipud(ret_arr.reshape((8, 8, 1)))
 
 def threat_set(board, s):
     """
@@ -191,36 +256,191 @@ def pin_check(board, attacked_pieces):
             return True
 
 def is_power2(x):
-    return not x & (x - 1)
+    return not x.mask & (x.mask - 1)
 
 def create_filters(gn, num_past, piece=True, moves=False):
 
-    pfilt = np.zeros((8, 8, 7 + num_past), dtype=np.int8)
+    pfilt = np.zeros((8, 8, 7 + num_past*12), dtype=np.int8)
     pfilt[:, :, 7:] = past_moves(gn, num_past)
     board = gn.board()
-    pfilt[:, :, 5] = capture(board, threat=True)
-    pfilt[:, :, 6] = pinned(board)
+    pfilt[:, :, 5:6] = capture(board, threat=True)
+    pfilt[:, :, 6:7] = pinned(board)
     for l in board.legal_moves:
+        from_ind = np.unravel_index(l.from_square, (8,8))
+        from_ind = (7 - from_ind[0], from_ind[1])
         # Check if the move is a capture
         if board.is_capture(l):
-            pfilt[np.unravel_index(l.from_square), 0] = 1
+            pfilt[from_ind[0], from_ind[1], 0] = 1
         # Our next checks are with the board if we were to make the move
         board.push(l)
         # Check if the move puts the enemy in check
         if board.is_check():
-            pfilt[np.unravel_index(l.from_square), 1] = 1
+            pfilt[from_ind[0], from_ind[1], 1] = 1
         # Find all of enemy's pieces threatened by move l
         attacked_pieces = threat_set(board, l.to_square)
         # Check for threats to enemy
         if attacked_pieces:
-            pfilt[np.unravel_index(l.from_square), 2] = 1
+            pfilt[from_ind[0], from_ind[1], 2] = 1
         # Check for forks
         # If the mask is a power of 2 or 0, it is not a fork
         if is_fork(attacked_pieces):
-            pfilt[np.unravel_index(l.from_square), 3] = 1
+            pfilt[from_ind[0], from_ind[1], 3] = 1
         # Check for pins
         if pin_check(board, attacked_pieces):
-            pfilt[np.unravel_index(l.from_square), 4] = 1
+            pfilt[from_ind[0], from_ind[1], 4] = 1
         # Reset the board to the original
         board.pop()
     return pfilt
+
+def switch_sides(X_game):
+    # Flip the boards
+    return X_game[:, ::-1, ...]
+
+def get_labels(X_before, X_after, debug=False):
+    """
+    Takes the winner boards pre-move and post-move
+    and returns a tuple with the following elements
+        1) a 1 at the position of the piece selected to move (0's elsewhere)
+        2) a 1 at the position where the piece was moved to (0's elsewhere)
+    """
+    # Find the residual boards
+    X_residual = X_before - X_after
+    # Use the residual boards to find the selected piece
+    selection = np.sum((X_residual > 0).astype(np.float32), axis=3)
+    # Get the number of pieces moved
+    num_moves = np.sum(selection, axis=(1, 2))
+    assert(len(num_moves.shape) == 1)
+    # If the move was a castle, force it to select the king
+    selection[num_moves == 2.] = CASTLE_KING
+    if np.any(num_moves > 2. or num_moves <= 0):
+        raise ValueError("Multiple moves between both boards")
+
+    # And where it moved to
+    movement = np.sum((X_residual < 0).astype(np.float32), axis=3)
+    # Get the number of pieces moved
+    num_moves = np.sum(selection, axis=(1, 2))
+    assert(len(num_moves.shape) == 1)
+    # Clean up the Castle moves
+    for i in range(len(num_moves)):
+        if num_moves[i] == 2:
+            movement[i] = QUEEN_CASTLE if movement[i, 7, 2] == 1 else KING_CASTLE
+    # If the move was a castle, normalize output
+    if np.any(num_moves > 2. or num_moves <= 0):
+        raise ValueError("Multiple moves between both boards")
+    return selection, movement
+
+def select_labels(selections, movements, selection_labels, movement_labels):
+    """
+    Makes labels for keras NN based on which are specified
+    """
+    y = []
+    if selection_labels:
+        y.append(selections)
+    if movement_labels:
+        y.append(movements)
+    if len(y) == 1:
+        y = y[0]
+    return y
+
+def batch_gen(pgn_fn, num_past=8, selections=True, movements=True, batch_size=32, shuffle=True):
+    game_boards = unwind_games(pgn_fn)
+    if shuffle:
+        inds = np.permutation(len(game_boards))
+    for i in range(0, len(game_boards), batch_size):
+        batch_inds = inds[i:i+batch_size]
+        x_batch = np.empty(len(batch_inds), 8, 8, 7 + num_past*12)
+        x_after = np.empty(len(batch_inds), 8, 8, 12)
+        # Fill in the batch
+        for ind, j in enumerate(batch_inds):
+            x_batch[ind] = create_filters(game_boards[j], num_past)
+            x_after[ind] = past_moves(game_boards[j+1], 1)
+            if not game_boards[j].board().turn:
+                # TODO carry over implementation of switch sides
+                x_batch[ind] = switch_sides(x_batch[ind])
+                x_after[ind] = switch_sides(x_after[ind])
+
+        # TODO carry over implementation of label making
+        selection, movement = get_labels(x_batch[:, :, :, 7:7+12], x_after)
+        y_batch = select_labels(selection, movement, selection_labels=selections, movement_labels=movements)
+
+        yield x_batch, y_batch
+
+
+class TestBoardMethods(tst.TestCase):
+
+    def test_b2array(self):
+        test1 = chess.Board()
+        expected = split_boards(pg.b2array(str(test1))[np.newaxis, :, :], split=12)[0]
+        np.testing.assert_array_equal(expected, b2array(test1))
+        self.assertEqual(str(array2b(b2array(test1))), str(test1))
+
+        test2 = chess.Board("rnb1k2r/ppp2ppp/5n2/3q4/1b1P4/2N5/PP3PPP/R1BQKBNR w KQkq - 3 7")
+        expected = split_boards(pg.b2array(str(test2))[np.newaxis, :, :], split=12)[0]
+        np.testing.assert_array_equal(expected, b2array(test2))
+        self.assertEqual(str(array2b(b2array(test2))), str(test2))
+
+    def test_pastmoves(self):
+        pgn_fn = '../ficsgamesdb_2015_CvC_nomovetimes_1443974.pgn'
+        game = None
+        for gn in read_games(pgn_fn):
+            game = gn
+            break
+        game = game.end()
+        num_past = 8
+        out = past_moves(game, num_past)
+        # print(out.transpose(2, 0, 1))
+
+        for i in range(num_past):
+            board = game.board()
+            past_move_arr = out[:, :, i*12:(i+1)*12]
+            # print(past_move_arr.shape)
+            # print(board)
+            # print('\n')
+            # print(array2b(past_move_arr))
+            self.assertEqual(str(array2b(past_move_arr)), str(board))
+            game = game.parent
+
+    def test_capture(self):
+        test1 = chess.Board()
+        expected = np.zeros((8, 8, 1))
+        np.testing.assert_array_equal(expected, capture(test1))
+
+        test2 = chess.Board("rnb1k2r/ppp2ppp/5n2/3q4/1b1P4/2N5/PP3PPP/R1BQKBNR w KQkq - 3 7")
+        print("Testing Threats")
+        print("White" if test2.turn else "Black")
+        print(test2)
+        print(test2.turn)
+        print(capture(test2).transpose(2, 0, 1))
+
+    def test_pinned(self):
+        test1 = chess.Board()
+        expected = np.zeros((8, 8, 1))
+        np.testing.assert_array_equal(expected, pinned(test1))
+
+        test2 = chess.Board("rnb1k2r/ppp2ppp/5n2/3q4/1b1P4/2N5/PP3PPP/R1BQKBNR w KQkq - 3 7")
+        print("Testing Pinned")
+        print("White" if test2.turn else "Black")
+        print(test2)
+        print(pinned(test2).transpose(2, 0, 1))
+
+    def test_other_filters(self):
+        test1 = chess.Board()
+        pgn_fn = '../ficsgamesdb_2015_CvC_nomovetimes_1443974.pgn'
+        game = None
+        for gn in read_games(pgn_fn):
+            game = gn
+            break
+        game = game.end()
+        for i in range(41):
+            game = game.parent
+        filts = create_filters(game, 8)
+        tests = ["Captures", "Check", "Attack", "Fork", "Pinning", "Threat", "Pinned"]
+        print("White" if game.board().turn else "Black")
+        print(game.board())
+        for i, test in enumerate(tests):
+            print("Testing " + test)
+            print(filts[:, :, i])
+
+
+if __name__ == "__main__":
+    tst.main()

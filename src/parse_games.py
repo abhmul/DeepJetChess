@@ -29,6 +29,7 @@ def read_games(fn):
             break
 
         yield g
+    f.close()
 
 
 def build_game(game):
