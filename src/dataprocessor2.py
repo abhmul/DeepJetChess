@@ -4,6 +4,7 @@ import parse_games as pg
 import numpy as np
 from dataprocessor import split_boards
 import unittest as tst
+from multiprocessing import Pool
 
 CASTLE_KING = np.array([[0, 0, 0, 0, 0, 0, 0, 0],
                         [0, 0, 0, 0, 0, 0, 0, 0],
@@ -30,6 +31,26 @@ KING_CASTLE = np.array([[0, 0, 0, 0, 0, 0, 0, 0],
                         [0, 0, 0, 0, 0, 0, 0, 0],
                         [0, 0, 0, 0, 0, 0, 1, 0]])
 
+def make_gn_arr(gn):
+    results = {'1-0': True, '0-1': False, '1/2-1/2': None}
+    gn_arr = []
+    # Ensure we are at the root of the game
+    if not gn.starts_variation():
+        gn = gn.root()
+    # Get the winner of the game
+    winner = results[gn.headers["Result"]]
+    # If tie, throw out the game
+    if winner is None:
+        return gn_arr
+    turn = True
+    while gn.variations:
+        # Go to the next move
+        gn = gn.variations[0]
+        turn = not turn
+        if winner == turn:
+            gn_arr.append(gn)
+    return gn_arr
+
 def unwind_games(pgn_fn):
     """
     Unwinds each game into its moves and puts them into
@@ -41,25 +62,13 @@ def unwind_games(pgn_fn):
     Returns:
     An array filled with GameNode objects for each move in each game
     """
-    gn_arr = []
-    results = {'1-0': True, '0-1': False, '1/2-1/2': None}
-    for gn in read_games(pgn_fn):
-        # Ensure we are at the root of the game
-        if not gn.starts_variation():
-            gn = gn.root()
-        # Get the winner of the game
-        winner = results[gn.headers["Result"]]
-        # If tie, throw out the game
-        if winner is None:
-            continue
-        turn = True
-        while gn.variations:
-            # Go to the next move
-            gn = gn.variations[0]
-            turn = not turn
-            if winner == turn:
-                gn_arr.append(gn)
-    return np.array(gn_arr)
+    # pool = Pool(processes=8)
+    gn_arrs = []
+    for i, gn_arr in enumerate(map(make_gn_arr, read_games(pgn_fn))):
+        if i % 200 == 0: print("Read %s games" % i)
+        if i == 1000: break
+        gn_arrs.append(gn_arr)
+    return np.hstack(gn_arrs)
 
 def squares2array(square_set):
     """
@@ -292,9 +301,17 @@ def create_filters(gn, num_past, piece=True, moves=False):
         board.pop()
     return pfilt
 
-def switch_sides(X_game):
-    # Flip the boards
-    return X_game[:, ::-1, ...]
+def unsplit(X_boards):
+    return sum((i + 1 if i < 6 else -1 * i - 1) * X_boards[:, :, :, i] for i in range(12))
+
+def switch_sides(X_game, prev_filts=0):
+    # Flip the boards and swap the black and white filters
+    flipped = X_game[::-1, ...]
+    # print(flipped.shape)
+    tmp = None
+    for i in range(prev_filts, flipped.shape[-1], 12):
+        flipped[:, :, i:i+12] = split_boards(-1 * unsplit(flipped[np.newaxis, :, :, i:i+12]), split=12)[0]
+    return flipped
 
 def get_labels(X_before, X_after, debug=False):
     """
@@ -304,9 +321,10 @@ def get_labels(X_before, X_after, debug=False):
         2) a 1 at the position where the piece was moved to (0's elsewhere)
     """
     # Find the residual boards
-    X_residual = X_before - X_after
+    X_residual = unsplit(X_before) - unsplit(X_after)
     # Use the residual boards to find the selected piece
-    selection = np.sum((X_residual > 0).astype(np.float32), axis=3)
+    selection = (X_residual > 0).astype(np.float32)
+    # print(selection)
     # Get the number of pieces moved
     num_moves = np.sum(selection, axis=(1, 2))
     assert(len(num_moves.shape) == 1)
@@ -316,7 +334,7 @@ def get_labels(X_before, X_after, debug=False):
         raise ValueError("Multiple moves between both boards")
 
     # And where it moved to
-    movement = np.sum((X_residual < 0).astype(np.float32), axis=3)
+    movement = (X_residual < 0).astype(np.float32)
     # Get the number of pieces moved
     num_moves = np.sum(selection, axis=(1, 2))
     assert(len(num_moves.shape) == 1)
@@ -345,19 +363,21 @@ def select_labels(selections, movements, selection_labels, movement_labels):
 def batch_gen(pgn_fn, num_past=8, selections=True, movements=True, batch_size=32, shuffle=True):
     game_boards = unwind_games(pgn_fn)
     if shuffle:
-        inds = np.permutation(len(game_boards))
+        inds = np.random.permutation(len(game_boards))
     for i in range(0, len(game_boards), batch_size):
         batch_inds = inds[i:i+batch_size]
-        x_batch = np.empty(len(batch_inds), 8, 8, 7 + num_past*12)
-        x_after = np.empty(len(batch_inds), 8, 8, 12)
+        x_batch = np.empty((len(batch_inds), 8, 8, 7 + num_past*12))
+        x_after = np.empty((len(batch_inds), 8, 8, 12))
         # Fill in the batch
         for ind, j in enumerate(batch_inds):
             x_batch[ind] = create_filters(game_boards[j], num_past)
-            x_after[ind] = past_moves(game_boards[j+1], 1)
+            x_after[ind] = past_moves(game_boards[j].variations[0], 1)
             if not game_boards[j].board().turn:
                 # TODO carry over implementation of switch sides
-                x_batch[ind] = switch_sides(x_batch[ind])
-                x_after[ind] = switch_sides(x_after[ind])
+                print("Switching Sides")
+                x_batch[ind] = switch_sides(x_batch[ind], prev_filts=7)
+                x_after[ind] = switch_sides(x_after[ind], prev_filts=0)
+            print("Next Move:\n", array2b(x_after[ind]))
 
         # TODO carry over implementation of label making
         selection, movement = get_labels(x_batch[:, :, :, 7:7+12], x_after)
@@ -440,6 +460,17 @@ class TestBoardMethods(tst.TestCase):
         for i, test in enumerate(tests):
             print("Testing " + test)
             print(filts[:, :, i])
+
+    def test_batch_gen(self):
+        pgn_fn = '../ficsgamesdb_2015_CvC_nomovetimes_1443974.pgn'
+        bg = batch_gen(pgn_fn, 8, batch_size=1)
+        i = 0
+        for x, (y_sel, y_mov) in bg:
+            print("Original Board:\n", array2b(x[0, :, :, 7:7+12]))
+            print("Selection:\n",y_sel[0].astype(np.int8))
+            print("Movement:\n",y_mov[0].astype(np.int8))
+            i += 1
+            if i == 10: break
 
 
 if __name__ == "__main__":

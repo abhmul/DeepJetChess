@@ -1,57 +1,68 @@
 from sklearn.model_selection import train_test_split
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from keras.optimizers import SGD, RMSprop
-import dataprocessor as dp
+from dataprocessor3 import DataProcessor
 import models
 
+import os
+
+FLOYD = False
+if FLOYD:
+    wd = "/input"
+    od = "/output"
+else:
+    wd = "../"
+    od = "../models"
+
 model_func = models.conv4layer
-movement_labels = True
+
+movement_labels = False
+movements = 'movements_' if movement_labels else ''
+
 cvc = True
-year = 2015
+cls = 'cvc_' if cvc else ''
+
+years = [2015, 2016]
 exclude_n = 5
-best_model_file = '../models/conv4layer_{}{}_{}exclude{}_weights.h5'
-if movement_labels:
-    to_load = best_model_file.format('cvc_' if cvc else '_',
-                                     2016,
-                                     '', exclude_n)
-best_model_file = best_model_file.format('cvc_' if cvc else '_',
-                                         year,
-                                         'movements_' if movement_labels
-                                         else '', exclude_n)
-graphing = True
+prev_boards = 4
+best_model_file = os.path.join(od, '{name}_{cls}{years}_{movements}exclude{exclude_n}_weights.h5')
+
+best_model_file = best_model_file.format(name=model_func.__name__,
+                                         cls=cls,
+                                         years=years,
+                                         movements=movements,
+                                         exclude_n=exclude_n)
+graphing = not FLOYD
 num_channels = 12
+batch_size=32
 
-fn_in = '../chess_games_{}{}.h5'.format('cvc_' if cvc else '_', year)
-X_before, X_after = dp.load_h5(fn_in, shuffle=False, exclude_n=exclude_n)
-X_before_train, X_before_test, X_after_train, X_after_test = train_test_split(X_before, X_after, train_size=.85)
+fn_ins = [os.path.join(wd, 'chess_games_{cls}{year}.h5'.format(cls=cls, year=year)) for year in years]
+dp = DataProcessor(movement_labels=movement_labels, exclude_n=exclude_n, prev_boards=prev_boards, validation_split=0.15)
+for fn_in in fn_ins:
+    dp.load_h5(fn_in)
 
-traingen = dp.chessgen(X_before_train, X_after_train, selection_labels=True,
-                       movement_labels=movement_labels, split=num_channels, prev_boards=0, batch_size=32,
-                       shuffle=True)
-valgen = dp.chessgen(X_before_test, X_after_test, selection_labels=True,
-                     movement_labels=movement_labels, split=num_channels, batch_size=32,
-                     shuffle=True)
-# next(traingen)
-# raise StopIteration
+print("Total Dataset size: {} moves and {} games".format(dp.num_moves, dp.num_games))
+
+traingen = dp.chessgen(batch_size=batch_size, shuffle=True, validation=False)
+valgen = dp.chessgen(batch_size=batch_size, shuffle=True, validation=True)
 
 optimizer = SGD(lr=0.001, momentum=0.9, nesterov=True)
 rms = RMSprop(lr=.0015, decay=.999)
-
-# optimizer = None
+# optimizer = 'adam'
 
 # This will save the best scoring model weights to the parent directory
 best_model = ModelCheckpoint(best_model_file, monitor='val_loss', mode='min', verbose=1, save_best_only=True,
                              save_weights_only=True)
 
-model = model_func(num_channels=num_channels, optimizer=optimizer, movement_labels=movement_labels, to_load=to_load)
+model = model_func(num_channels=num_channels, prev_boards=prev_boards, optimizer=optimizer, movement_labels=movement_labels)
 print(model.summary())
 # model.load_weights(best_model_file)
 
 def scheduler(epoch):
-    if epoch < 15:
+    if epoch < 30:
         print("Learning Rate for Epoch %s: %s" %(epoch, 0.001))
         return float(0.001)
-    elif epoch < 30:
+    elif epoch < 50:
         print("Learning Rate for Epoch %s: %s" %(epoch, 0.0001))
         return float(0.0001)
     elif epoch < 60:
@@ -63,10 +74,13 @@ def scheduler(epoch):
 
 
 change_lr = LearningRateScheduler(scheduler)
+steps_per_epoch = int((dp.train_size + batch_size - 1) / batch_size)
+val_steps = int((dp.val_size + batch_size - 1) / batch_size)
 
-fit = model.fit_generator(traingen, samples_per_epoch=X_before_train.shape[0],
-                          nb_epoch=50, verbose=1, callbacks=[best_model, change_lr],
-                          validation_data=valgen, nb_val_samples=X_before_test.shape[0])
+print("Fitting model")
+fit = model.fit_generator(traingen, steps_per_epoch=steps_per_epoch,
+                          epochs=50, verbose=1, callbacks=[best_model, change_lr],
+                          validation_data=valgen, validation_steps=val_steps)
 
 if graphing:
     import matplotlib.pyplot as plt
@@ -77,6 +91,10 @@ if graphing:
 
     plt.plot(fit.history['val_acc'])
     plt.title('Validation Accuracy')
+    plt.show()
+
+    plt.plot(fit.history['val_top_k_categorical_accuracy'])
+    plt.title('Validation Top-3 Accuracy')
     plt.show()
 else:
     print('Validation Loss')

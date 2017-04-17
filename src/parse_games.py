@@ -201,6 +201,5 @@ class TestBoardMethods(tst.TestCase):
 
 
 if __name__ == '__main__':
-    data_fn = '../ficsgamesdb_2015_CvC_nomovetimes_1443974.pgn'
-    to_h5(data_fn, '../chess_games_cvc_2015.h5')
+    to_h5(sys.argv[1], sys.argv[2])
     # tst.main()
