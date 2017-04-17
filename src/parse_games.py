@@ -109,14 +109,17 @@ def to_h5(fname_in, fname_out):
 
     # Iniitialize the datasets
     g = h5py.File(fname_out, 'w')
-    X = g.create_dataset('X', (0, 8, 8), dtype='i8', maxshape=(None, 8, 8), chunks=True)
-    M = g.create_dataset('M', (0,), dtype='i8', maxshape=(None,), chunks=True)
-    W = g.create_dataset('W', (0,), dtype='b', maxshape=(None,), chunks=True)
+    move_size = 8388607 # Empirically determined
+    game_size = 65535 # Empirically determined
+    print("Initializing Dataset...")
+    X = g.create_dataset('X', (move_size, 8, 8), dtype='i8', maxshape=(None, 8, 8), chunks=True)
+    M = g.create_dataset('M', (move_size,), dtype='i8', maxshape=(None,), chunks=True)
+    W = g.create_dataset('W', (game_size,), dtype='b', maxshape=(None,), chunks=True)
+    print("Dataset Initialized")
 
-    move_size = 0
     moves = 0
     games = 0
-    game_size = 0
+
     game_reader = read_games(fname_in)
     pool = Pool(processes=8)
 
