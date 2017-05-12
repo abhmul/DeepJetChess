@@ -1,161 +1,47 @@
-from keras.layers import Dense, Flatten, Reshape, Input, merge, AveragePooling2D # noqa D100
-from keras.layers.merge import Concatenate
+from keras.layers import Dense, Flatten, Reshape, Input, merge, AveragePooling2D, concatenate # noqa D100
 from keras.models import Sequential, Model
 from keras.layers.convolutional import Conv2D
 import keras.backend as K
 
-from functools import partial
+def modified_inception_module(input_img, num_filters):
+
+    tower_1 = Conv2D(num_filters, (1, 1), padding='same', activation='relu')(input_img)
+    tower_1 = Conv2D(num_filters, (3, 3), padding='same', activation='relu')(tower_1)
+
+    tower_2 = Conv2D(num_filters, (1, 1), padding='same', activation='relu')(input_img)
+    tower_2 = Conv2D(num_filters, (5, 5), padding='same', activation='relu')(tower_2)
+
+    tower_3 = Conv2D(num_filters, (1, 1), padding='same', activation='relu')(input_img)
+    # tower_1 = Conv2D(num_filters, 3, 3, padding='same', activation='relu')(tower_3)
+
+    output = merge([tower_1, tower_2, tower_3], mode='concat', concat_axis=3)
+    return output
 
 
-def top_k_categorical_accuracy(y_true, y_pred, k=3):
-    y_true_flat = K.batch_flatten(y_true)
-    y_pred_flat = K.batch_flatten(y_pred)
-    return K.mean(K.in_top_k(y_pred_flat, K.argmax(y_true_flat, axis=-1), k), axis=-1)
+# Towers
+def pos2vec():
+    input_vec = Input(shape=(769,))
 
-top_3 = top_k_categorical_accuracy
-
-# 16,84 % val acc, .1206 loss after 4 epochs on 2016
-def relu3layer(num_channels=12, prev_boards=0, selection_labels=True, movement_labels=False, optimizer=None, to_load=None):
-    # Model from https://erikbern.com/2014/11/29/deep-learning-for-chess/
-    input_img = Input(shape=(8, 8, num_channels * (prev_boards + 1)))
-
-    x = Flatten(input_shape=(8, 8, num_channels * (prev_boards + 1)))(input_img)
-    x = Dense(2048, activation='relu')(x)
-    x = Dense(2048, activation='relu')(x)
-    x = Dense(2048, activation='relu')(x)
-    selections_flat = Dense(64, activation='softmax')(x)
-    selections = Reshape((8, 8))(selections_flat)
-
-    output = [selections]
-    model = Model(inputs=input_img, outputs=output)
-
-    if to_load is not None:
-        model.load_weights(to_load)
-
-    if movement_labels:
-        y = Concatenate()([x, selections_flat])
-        y = Dense(256, activation='relu')(y)
-        movements = Dense(64, activation='softmax')(y)
-        movements = Reshape((8, 8), name='movements')(movements)
-        output.append(movements)
-        if not selection_labels:
-            output = output[1]
-        model = Model(inputs=input_img, outputs=output)
-
-    print("Using optimizer: {}".format(optimizer if optimizer is not None else'adam'))
-
-    model.compile(optimizer if optimizer is not None else'adam',
-                  'categorical_crossentropy', metrics=['accuracy', top_3])
-
-    return model
-
-
-def pos2vec(num_channels=12, prev_boards=0, selection_labels=True, movement_labels=False, optimizer=None, to_load=None):
-    input_img = Input(shape=(8, 8, num_channels * (prev_boards + 1)))
-
-    x = Flatten(input_shape=(8, 8, num_channels * (prev_boards + 1)))(input_img)
-    x = Dense(600, activation='relu')(x)
+    x = Dense(600, activation='relu')(input_vec)
     x = Dense(400, activation='relu')(x)
     x = Dense(200, activation='relu')(x)
-    x = Dense(100, activation='relu')(x)
-    selections_flat = Dense(64, activation='softmax')(x)
-    selections = Reshape((8, 8))(selections_flat)
+    output = Dense(100, activation='relu')(x)
 
-    output = [selections]
-    model = Model(inputs=input_img, outputs=output)
+    return Model(inputs=input_vec, outputs=output)
 
-    if to_load is not None:
-        model.load_weights(to_load)
-
-    if movement_labels:
-        y = Concatenate()([x, selections_flat])
-        y = Dense(256, activation='relu')(y)
-        movements = Dense(64, activation='softmax')(y)
-        movements = Reshape((8, 8), name='movements')(movements)
-        output.append(movements)
-        if not selection_labels:
-            output = output[1]
-        model = Model(inputs=input_img, outputs=output)
-
-    print("Using optimizer: {}".format(optimizer if optimizer is not None else'adam'))
-
-    model.compile(optimizer if optimizer is not None else'adam',
-                  'categorical_crossentropy', metrics=['accuracy', top_3])
-
-    return model
-
-# .276 val_loss and 8.5% val acc on 2016 exclude 5
-def convchess_b(num_channels=12, prev_boards=0, selection_labels=True, movement_labels=False, optimizer=None, to_load=None):
-    input_img = Input(shape=(8, 8, num_channels * (prev_boards + 1)))
-    x = Conv2D(32, (3, 3), padding='valid', activation='relu')(input_img)
-
-    x = Flatten()(x)
-    selections_flat = Dense(128, activation='relu')(x)
-    selections_flat = Dense(64, activation='softmax')(selections_flat)
-    selections = Reshape((8, 8))(selections_flat)
-
-    output = [selections]
-    model = Model(inputs=input_img, outputs=output)
-
-    if to_load is not None:
-        model.load_weights(to_load)
-
-    if movement_labels:
-        y = Concatenate()([x, selections_flat])
-        y = Dense(256, activation='relu')(y)
-        movements = Dense(64, activation='softmax')(y)
-        movements = Reshape((8, 8), name='movements')(movements)
-        output.append(movements)
-        if not selection_labels:
-            output = output[1]
-        model = Model(inputs=input_img, outputs=output)
-
-    print("Using optimizer: {}".format(optimizer if optimizer is not None else'adam'))
-
-    model.compile(optimizer if optimizer is not None else'adam',
-                  'categorical_crossentropy', metrics=['accuracy', top_3])
-
-    return model
-
-# Scores 25% val acc and .0627 (going down 7 ep) val_loss on cvc 2015 exclude5 prev4
-def conv4layer(num_channels=12, prev_boards=0, selection_labels=True, movement_labels=False, optimizer=None, to_load=None):
-    input_img = Input(shape=(8, 8, num_channels * (prev_boards + 1)))
+def conv4layer_tower():
+    input_img = Input(shape=(8, 8, 13))
 
     x = Conv2D(64, (3, 3), padding='valid', activation='relu')(input_img)
     x = Conv2D(128, (3, 3), padding='valid', activation='relu')(x)
     x = Conv2D(256, (3, 3), padding='valid', activation='relu')(x)
     x = Conv2D(256, (2, 2), padding='valid', activation='relu')(x)
+    output = Flatten()(x)
 
-    x = Flatten()(x)
-    selections_flat = Dense(64, activation='softmax')(x)
-    selections = Reshape((8, 8), name='selections')(selections_flat)
-    output = [selections]
-    model = Model(inputs=input_img, outputs=output)
+    return Model(inputs=input_img, outputs=output)
 
-    if to_load is not None:
-        model.load_weights(to_load)
-
-    if movement_labels:
-        y = Concatenate()([x, selections_flat])
-        y = Dense(256, activation='relu')(y)
-        movements = Dense(64, activation='softmax')(y)
-        movements = Reshape((8, 8), name='movements')(movements)
-        output.append(movements)
-        if not selection_labels:
-            output = output[1]
-        model = Model(inputs=input_img, outputs=output)
-
-    print("Using optimizer: {}".format(optimizer if optimizer is not None else'adam'))
-
-    model.compile(optimizer if optimizer is not None else'adam',
-                  'categorical_crossentropy', metrics=['accuracy', top_3])
-
-    return model
-
-
-# Scores 22% val acc on small 2016
-def conv10layer(num_channels=12, prev_boards=0, selection_labels=True, movement_labels=False, optimizer=None, to_load=None):
-    input_img = Input(shape=(8, 8, num_channels * (prev_boards + 1)))
+def conv10layer_tower():
+    input_img = Input(shape=(8, 8, 13))
 
     x = Conv2D(64, (3, 3), padding='same', activation='relu')(input_img)
     x = Conv2D(64, (3, 3), padding='same', activation='relu')(x)
@@ -169,42 +55,29 @@ def conv10layer(num_channels=12, prev_boards=0, selection_labels=True, movement_
     x = Conv2D(256, (3, 3), padding='same', activation='relu')(x)
     x = Conv2D(256, (3, 3), padding='valid', activation='relu')(x)
 
-    x = Flatten()(x)
-    selections_flat = Dense(64, activation='softmax')(x)
-    selections = Reshape((8, 8))(selections_flat)
+    output = Flatten()(x)
 
-    output = [selections]
-    model = Model(inputs=input_img, outputs=output)
+    return Model(inputs=input_img, outputs=output)
 
-    if to_load is not None:
-        model.load_weights(to_load)
+def inception_tower(filters=[32, 64, 128, 256, 256]):
+    input_img = Input(shape=(8, 8, 13))
 
-    if movement_labels:
-        y = Concatenate()([x, selections_flat])
-        y = Dense(256, activation='relu')(y)
-        movements = Dense(64, activation='softmax')(y)
-        movements = Reshape((8, 8), name='movements')(movements)
-        output.append(movements)
-        if not selection_labels:
-            output = output[1]
-        model = Model(inputs=input_img, outputs=output)
+    x = input_img
+    for nfilt in filters:
+        x = modified_inception_module(x, nfilt)
 
-    print("Using optimizer: {}".format(optimizer if optimizer is not None else'adam'))
+    output = Flatten()(x)
 
-    model.compile(optimizer if optimizer is not None else'adam',
-                  'categorical_crossentropy', metrics=['accuracy', top_3])
+    return Model(inputs=input_img, outputs=output)
 
-    return model
-
-# 18.9 % accuracy .1106 loss w/ 2016 exclude5
-def conv_searcher(num_channels=12, prev_boards=0, selection_labels=True, movement_labels=False, optimizer=None, to_load=None):
-    input_img = Input(shape=(8, 8, num_channels * (prev_boards + 1)))
+def conv_searcher_tower():
+    input_img = Input(shape=(8, 8, 13))
 
     # Local searcher
     local = Conv2D(64, (3, 3), padding='valid', activation='relu')(input_img)
     local = Conv2D(128, (3, 3), padding='valid', activation='relu')(local)
     local = Conv2D(256, (3, 3), padding='valid', activation='relu')(local)
-    local = Conv2D(512, (2, 2), padding='valid', activation='relu')(local)
+    local = Conv2D(512, (2, 2), padding='valid', activation='relu')(local) # 1 x 1 x 512
     # Creates a 1 x 1 x 512 output
 
     # Column searcher
@@ -222,126 +95,92 @@ def conv_searcher(num_channels=12, prev_boards=0, selection_labels=True, movemen
     row = Conv2D(512, (2, 1), padding='valid', activation='relu')(row) # 1 x 1 x 512
 
     # Merge the local, row, and column searchers
-    searcher = merge([local, row, column], mode='concat', concat_axis=3)
+    searcher = concatenate([local, row, column], axis=-1)
     searcher = Flatten()(searcher)
 
     # Create the global searcher
     glob = Flatten()(input_img)
     glob = Dense(1024, activation='relu')(glob)
+    glob = Dense(512, activation='relu')(glob)
+    glob = Dense(256, activation='relu')(glob)
+    glob = Dense(128, activation='relu')(glob)
 
-    # Merge the conv searchers with the global
-    x = merge([glob, searcher], mode='concat', concat_axis=1)
-    selections_flat = Dense(64, activation='softmax')(x)
-    selections = Reshape((8, 8))(selections_flat)
-    output = [selections]
-    model = Model(inputs=input_img, outputs=output)
+    x = concatenate([glob, searcher], axis=-1) # 128 + 512*3 = 1564
+    output = Dense(512, activation='relu')(x)
 
-    if to_load is not None:
-        model.load_weights(to_load)
+    return Model(inputs=input_img, outputs=output)
 
-    if movement_labels:
-        y = Concatenate()([x, selections_flat])
-        y = Dense(256, activation='relu')(y)
-        movements = Dense(64, activation='softmax')(y)
-        movements = Reshape((8, 8), name='movements')(movements)
-        output.append(movements)
-        if not selection_labels:
-            output = output[1]
-        model = Model(inputs=input_img, outputs=output)
+# Full models
+def deepchess(optimizer=None):
 
-    print("Using optimizer: {}".format(optimizer if optimizer is not None else'adam'))
+    b1 = Input(shape=(769,))
+    b2 = Input(shape=(769,))
 
-    model.compile(optimizer if optimizer is not None else'adam',
-                  'categorical_crossentropy', metrics=['accuracy', top_3])
+    tower = pos2vec()
 
-    return model
+    w = tower(b1)
+    x = tower(b2)
 
+    merged_vector = concatenate([w, x], axis=-1)
+    combined = Dense(400, activation='relu')(merged_vector)
+    combined = Dense(200, activation='relu')(combined)
+    combined = Dense(100, activation='relu')(combined)
+    output = Dense(2, activation='softmax')(merged_vector)
 
-
-
-def conv16layer(num_channels=12, prev_boards=0, selection_labels=True, movement_labels=False, optimizer=None, to_load=None):
-
-    input_img = Input(shape=(8, 8, num_channels * (prev_boards + 1)))
-
-    x = Conv2D(64, (3, 3), padding='same', activation='relu')(input_img)
-    x = Conv2D(64, (3, 3), padding='same', activation='relu')(x)
-    x = Conv2D(64, (3, 3), padding='same', activation='relu')(x)
-    x = Conv2D(64, (3, 3), padding='valid', activation='relu')(x)
-    # model.add(AveragePooling2D(pool_size=(2,2), strides=(2,2)))
-
-    x = Conv2D(128, (3, 3), padding='same', activation='relu')(x)
-    x = Conv2D(128, (3, 3), padding='same', activation='relu')(x)
-    x = Conv2D(128, (3, 3), padding='same', activation='relu')(x)
-    x = Conv2D(128, (3, 3), padding='valid', activation='relu')(x)
-    # model.add(AveragePooling2D(pool_size=(2,2), strides=(2,2)))
-
-    x = Conv2D(256, (3, 3), padding='same', activation='relu')(x)
-    x = Conv2D(256, (3, 3), padding='same', activation='relu')(x)
-    x = Conv2D(256, (3, 3), padding='same', activation='relu')(x)
-    x = Conv2D(256, (3, 3), padding='valid', activation='relu')(x)
-    # model.add(AveragePooling2D(pool_size=(2,2), strides=(2,2)))
-
-    x = Conv2D(512, (3, 3), padding='same', activation='relu')(x)
-    x = Conv2D(512, (3, 3), padding='same', activation='relu')(x)
-    x = Conv2D(512, (3, 3), padding='same', activation='relu')(x)
-    x = Conv2D(512, (2, 2), padding='valid', activation='relu')(x)
-    # model.add(AveragePooling2D(pool_size=(2,2), strides=(2,2)))
-
-    x = Flatten()(x)
-    selections_flat = Dense(64, activation='softmax')(x)
-    selections = Reshape((8, 8))(selections_flat)
-
-    output = [selections]
-    model = Model(inputs=input_img, outputs=output)
-
-    if to_load is not None:
-        model.load_weights(to_load)
-
-    if movement_labels:
-        y = Concatenate()([x, selections_flat])
-        y = Dense(256, activation='relu')(y)
-        movements = Dense(64, activation='softmax')(y)
-        movements = Reshape((8, 8), name='movements')(movements)
-        output.append(movements)
-        if not selection_labels:
-            output = output[1]
-        model = Model(inputs=input_img, outputs=output)
-
-    print("Using optimizer: {}".format(optimizer if optimizer is not None else'adam'))
-
-    model.compile(optimizer if optimizer is not None else'adam',
-                  'categorical_crossentropy', metrics=['accuracy', top_3])
-
-    return model
-
-
-def modified_inception_module(input_img, num_filters):
-
-    tower_1 = Conv2D(num_filters, 1, 1, padding='same', activation='relu')(input_img)
-    tower_1 = Conv2D(num_filters, 3, 3, padding='same', activation='relu')(tower_1)
-
-    tower_2 = Conv2D(num_filters, 1, 1, padding='same', activation='relu')(input_img)
-    tower_2 = Conv2D(num_filters, 5, 5, padding='same', activation='relu')(tower_2)
-
-    tower_3 = Conv2D(num_filters, 1, 1, padding='same', activation='relu')(input_img)
-    # tower_1 = Conv2D(num_filters, 3, 3, padding='same', activation='relu')(tower_3)
-
-    output = merge([tower_1, tower_2, tower_3], mode='concat', concat_axis=3)
-    return output
-
-# Scores 17% Val acc w/ Filters [32, 64, 128, 256, 256] on small 2016
-def inception_nlayer(filters, num_channels=12, optimizer=None):
-
-    input_img = Input(shape=(8, 8, num_channels))
-    x = input_img
-    for nfilt in filters:
-        x = modified_inception_module(x, nfilt)
-
-    x = Flatten()(x)
-    x = Dense(64, activation='softmax')(x)
-    output = Reshape((8, 8))(x)
-
-    model = Model(input=input_img, output=output)
-    model.compile(optimizer if optimizer is not None else'rmsprop',
+    model = Model(inputs=[b1, b2], outputs=output)
+    model.compile(optimizer if optimizer is not None else 'adam',
                   'categorical_crossentropy', metrics=['accuracy'])
     return model
+
+def conv4layer(optimizer=None):
+
+    b1 = Input(shape=(8, 8, 13))
+    b2 = Input(shape=(8, 8, 13))
+
+    tower = conv4layer_tower()
+
+    w = tower(b1)
+    x = tower(b2)
+
+    merged_vector = concatenate([w, x], axis=-1)
+    z = Dense(128, activation='relu')(merged_vector)
+    output = Dense(1, activation='sigmoid')(z)
+
+    model = Model(inputs=[b1, b2], outputs=output)
+    model.compile(optimizer if optimizer is not None else'adam',
+                  'binary_crossentropy', metrics=['accuracy'])
+    return model
+
+def comparator(tower_func, optimizer=None):
+
+    b1 = Input(shape=(8, 8, 13))
+    b2 = Input(shape=(8, 8, 13))
+
+    tower = tower_func()
+
+    w = tower(b1)
+    x = tower(b2)
+
+    merged_vector = concatenate([w, x], axis=-1)
+    output = Dense(1, activation='sigmoid')(merged_vector)
+
+    model = Model(inputs=[b1, b2], outputs=output)
+    model.compile(optimizer if optimizer is not None else 'adam',
+                  'binary_crossentropy', metrics=['accuracy'])
+    return model
+
+# Ep43
+# loss: 0.1846 - acc: 0.9205
+# val_loss: 0.1824 - val_acc: 0.9217
+def conv10layer(optimizer=None):
+
+    return comparator(conv10layer_tower, optimizer=optimizer)
+
+#Ep 28
+def incpetion_net(optimizer=None):
+
+    return comparator(inception_tower, optimizer=optimizer)
+
+def conv_searcher(optimizer=None):
+
+    return comparator(conv_searcher_tower, optimizer=optimizer)

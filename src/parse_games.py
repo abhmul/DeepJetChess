@@ -4,8 +4,13 @@ import chess
 import chess.pgn
 import h5py
 from multiprocessing import Pool
+from timeit import timeit
+import string
+import re
 
 import unittest as tst
+
+from np_board_utils import sb2array
 
 import sys
 sys.setrecursionlimit(10000)
@@ -31,7 +36,6 @@ def read_games(fn):
         yield g
     f.close()
 
-
 def build_game(game):
     """Returns a list of all the boards in order in a game"""
     gn = game.end()
@@ -44,7 +48,7 @@ def build_game(game):
     game_boards.reverse()
     return game_boards
 
-def b2array(board):
+def sb2array2(board):
     """
     Turns a string board into an ndarray
     Black is represented as negative values
@@ -101,7 +105,7 @@ def extract_gdata(game):
     x = np.empty((move_arr.shape[0], 8, 8), dtype=np.int8)
     # Fill in the board ndarray
     for i, board in enumerate(game_boards):
-        x[i] = b2array(str(board))
+        x[i] = sb2array(str(board))
 
     return x, move_arr, winner
 
@@ -110,15 +114,14 @@ def to_h5(fname_in, fname_out):
     # Iniitialize the datasets
     g = h5py.File(fname_out, 'w')
     move_size = 8388607 # Empirically determined
-    game_size = 65535 # Empirically determined
+    # game_size = 65535 # Empirically determined
     print("Initializing Dataset...")
     X = g.create_dataset('X', (move_size, 8, 8), dtype='i8', maxshape=(None, 8, 8), chunks=True)
     M = g.create_dataset('M', (move_size,), dtype='i8', maxshape=(None,), chunks=True)
-    W = g.create_dataset('W', (game_size,), dtype='b', maxshape=(None,), chunks=True)
+    W = g.create_dataset('W', (move_size,), dtype='i8', maxshape=(None,), chunks=True)
     print("Dataset Initialized")
 
     moves = 0
-    games = 0
 
     game_reader = read_games(fname_in)
     pool = Pool(processes=8)
@@ -126,10 +129,10 @@ def to_h5(fname_in, fname_out):
     # Loop through every game
     for extract_try in pool.imap_unordered(extract_gdata, game_reader):
         # Try to extract the game data
-        if extract_try is not None:
-            x, move_arr, winner = extract_try
-        else:
+        if extract_try is None:
             continue
+
+        x, move_arr, winner = extract_try
 
         game_moves = len(move_arr)
 
@@ -138,71 +141,23 @@ def to_h5(fname_in, fname_out):
             g.flush()
             move_size = 2 * move_size + 1
             print('Resizing board and moves to %s' % move_size)
-            [d.resize(size=move_size, axis=0) for d in (X, M)]
-
-        # Resize the h5 file if we're gonna need more space to store the winner
-        while games + 1 >= game_size:
-            g.flush()
-            game_size = 2 * game_size + 1
-            print('Resizing winners to %s' % game_size)
-            W.resize(size=game_size, axis=0)
+            [d.resize(size=move_size, axis=0) for d in (X, M, W)]
 
         X[moves:moves+game_moves] = x
         M[moves:moves+game_moves] = move_arr
-        W[games] = winner
+        W[moves:moves+game_moves] = winner
 
         moves += game_moves
-        games += 1
 
     # Resize down to if we overshot
-    print('Final Size for boards and moves: %s' % moves)
-    [d.resize(size=moves, axis=0) for d in (X, M)]
-    print('Final Size for winners: %s' % games)
-    W.resize(size=games, axis=0)
-
-
-class TestBoardMethods(tst.TestCase):
-
-    def test_b2array(self):
-        # Case 1: A start board
-        start_board = 'r n b q k b n r' \
-                      'p p p p p p p p' \
-                      '. . . . . . . .' \
-                      '. . . . . . . .' \
-                      '. . . . . . . .' \
-                      '. . . . . . . .' \
-                      'P P P P P P P P' \
-                      'R N B Q K B N R'
-        expected =np.array([[-4, -2, -3, -5, -6, -3, -2, -4],
-                            [-1, -1, -1, -1, -1, -1, -1, -1,],
-                            [ 0, 0, 0, 0, 0, 0, 0, 0],
-                            [ 0, 0, 0, 0, 0, 0, 0, 0],
-                            [ 0, 0, 0, 0, 0, 0, 0, 0],
-                            [ 0, 0, 0, 0, 0, 0, 0, 0],
-                            [ 1, 1, 1, 1, 1, 1, 1, 1],
-                            [ 4, 2, 3, 5, 6, 3, 2, 4]])
-        np.testing.assert_array_equal(expected, b2array(start_board))
-
-        # Case 2: A mid-game board
-        mid_board = 'r . b q . . k r' \
-                    'p p p . . . p p' \
-                    '. . n b . . . .' \
-                    '. . . p p . . .' \
-                    '. . . . . . . .' \
-                    '. . N P . N . .' \
-                    'P P P . Q P P P' \
-                    'R . B . K . . R'
-        expected = np.array([[-4, 0, -3, -5, 0, 0, -6, -4],
-                             [-1, -1, -1, 0, 0, 0, -1, -1],
-                             [ 0, 0, -2, -3, 0, 0, 0, 0],
-                             [ 0, 0, 0, -1, -1, 0, 0, 0],
-                             [ 0, 0, 0, 0, 0, 0, 0, 0],
-                             [ 0, 0, 2, 1, 0, 2, 0, 0],
-                             [ 1, 1, 1, 0, 5, 1, 1, 1],
-                             [ 4, 0, 3, 0, 6, 0, 0, 4]])
-        np.testing.assert_array_equal(expected, b2array(mid_board))
+    print('Final Size for boards, moves, and winners: %s' % moves)
+    [d.resize(size=moves, axis=0) for d in (X, M, W)]
 
 
 if __name__ == '__main__':
-    to_h5(sys.argv[1], sys.argv[2])
     # tst.main()
+    # a = timeit("sb2array(str(b))", setup="import chess;from parse_games import sb2array;b = chess.Board()", number=10000)
+    # print("Original: %s" % a)
+    # b = timeit("sb2array2(str(b))", setup="import chess;from parse_games import sb2array2;b = chess.Board()", number=10000)
+    # print("New: %s" % b)
+    to_h5(sys.argv[1], sys.argv[2])

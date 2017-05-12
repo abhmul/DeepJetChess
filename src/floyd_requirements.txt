@@ -1,2 +1,0 @@
-keras==2.0.2
-python-chess==0.16.2
