@@ -1,3 +1,5 @@
+from functools import total_ordering
+
 import numpy as np
 import chess
 
@@ -56,11 +58,23 @@ def create_input(arr_b, white_move):
 
     return arr_in
 
+@total_ordering
 class NpBoard(object):
 
-    def __init__(self, board):
+    def __init__(self, board, comparator):
+        self.__hash = board.zobrist_hash()
         self.turn = board.turn
         self.np_board = sb2array(str(board))
+        self.comparator = comparator
+
+    def __hash__(self):
+        return self.__hash
+
+    def __lt__(self, other):
+        return self.comparator.less(self, other)
+
+    def __eq__(self, other):
+        return self.comparator.equal(self, other)
 
     def create_input(self):
         return create_input(self.np_board, self.turn)
@@ -71,20 +85,41 @@ class NpBoard(object):
     def is_loss(self):
         return False
 
+
+@total_ordering
 class Win(NpBoard):
 
     def __init__(self):
         self.turn = None
         self.np_board = None
 
+    def __hash__(self):
+        raise ValueError("Cannot hash a Win board")
+
+    def __lt__(self, other):
+        return False
+
+    def __eq__(self, other):
+        return other.is_win()
+
     def is_win(self):
         return True
 
+@total_ordering
 class Loss(NpBoard):
 
     def __init__(self):
         self.turn = None
         self.np_board = None
+
+    def __hash__(self):
+        raise ValueError("Cannot hash a Loss board")
+
+    def __lt__(self, other):
+        return True
+
+    def __eq__(self, other):
+        return other.is_loss()
 
     def is_loss(self):
         return True

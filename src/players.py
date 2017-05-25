@@ -8,6 +8,20 @@ from np_board_utils import sb2array, NpBoard, WIN, LOSS
 
 MAXD = 1
 
+def make_gn_child(gn_current, move):
+    gn_child = chess.pgn.GameNode()
+    gn_child.parent = gn_current
+    gn_child.move = move
+    return gn_child
+
+def create_move(board, crdn):
+    # workaround for pawn promotions
+    move = chess.Move.from_uci(crdn)
+    if board.piece_at(move.from_square).piece_type == chess.PAWN:
+        if int(move.to_square/8) in [0, 7]:
+            move.promotion = chess.QUEEN # always promote to queen
+    return move
+
 class Player(object):
     def move(self, gn_current):
         raise NotImplementedError()
@@ -19,8 +33,12 @@ class Computer(Player):
         self._gn = None
         self._maxd = maxd
 
+    @property
+    def _cache(self):
+        return self._comparator._cache
+
     def move(self, gn_current):
-        assert(gn_current.board(_cache=True).turn == True)
+        # assert(gn_current.board(_cache=True).turn == True)
 
         self._gn = gn_current
 
@@ -31,8 +49,8 @@ class Computer(Player):
         t0 = time.time()
         # Board in array format
         # Move in python-chess format
-        best_board, best_move = self.alphabeta(self._gn, self._comparator, depth, LOSS, WIN, True)
-        print("Depth %s : Move %s : Time %s" %(depth, best_move, time.time() - t0))
+        best_board, best_move = self.alphabeta(self._gn, depth, LOSS, WIN, self._gn.board(_cache=True).turn)
+        print("Depth %s : Move %s : Time %s : Cache Size %s" %(depth, best_move, time.time() - t0, len(self._cache)))
 
         gn_new = chess.pgn.GameNode()
         gn_new.parent = gn_current
@@ -40,13 +58,11 @@ class Computer(Player):
 
         return gn_new
 
-    @staticmethod
-    def alphabeta(gn_current, comparator, depth, alpha, beta, maximizing_player):
+    def alphabeta(self, gn_current, depth, alpha, beta, maximizing_player):
         """
         Runs position alpha-beta pruning using comparator to compare positions
         Arguments:
             gn_current -- The current game node (pgn python-chess format)
-            comparator -- The value net that compares two positions
             depth -- Max depth to search the tree
             alpha -- The node's alpha value (a numpy board)
             beta -- The node's beta value (a numpy board)
@@ -58,56 +74,65 @@ class Computer(Player):
 
         if depth == 0 or gn_current.board(_cache=True).is_game_over():
             # Build the board array and return
-            return NpBoard(gn_current.board()), None
+            return NpBoard(gn_current.board(), self._comparator), None
 
         # We need to initialize
         best_move = None
 
+        # Get all the children
+        children = [make_gn_child(gn_current, move) for move in gn_current.board(_cache=True).legal_moves]
+
+        # Cache their embeddings
+        np_children = [NpBoard(gn_child.board(), self._comparator) for gn_child in children]
+        self._comparator.embed(np_children)
+
         if maximizing_player:
             # We need to initialize
             best_board = LOSS
+            # Sort the child boards inds
+            child_inds = sorted(range(len(np_children)), key=lambda i: np_children[i], reverse=True)
+            # child_inds = range(len(np_children))
 
-            for move in gn_current.board(_cache=True).legal_moves:
+            for i in child_inds:
                 # Make the child
-                gn_child = chess.pgn.GameNode()
-                gn_child.parent = gn_current
-                gn_child.move = move
+                gn_child = children[i]
                 # Calculate node position
-                child_np_board, _ = Computer.alphabeta(gn_child, comparator, depth-1, alpha, beta, False)
+                child_np_board, _ = self.alphabeta(gn_child, depth-1, alpha, beta, False)
                 # See if its better than the current max
-                if comparator.greater(child_np_board, best_board):
+                if best_board < child_np_board:
                     best_board = child_np_board
-                    best_move = move
+                    best_move = gn_child.move
 
                     # See if we need to change the alpha
-                    if comparator.greater(best_board, alpha):
+                    if alpha < best_board:
                         alpha = best_board
 
                         # Check for beta pruning
-                        if comparator.less_equal(beta, alpha):
+                        if beta <= alpha:
                             break
 
         else:
             # We need to initialize
             best_board = WIN
+            # Sort the child boards inds
+            child_inds = sorted(range(len(np_children)), key=lambda i: np_children[i])
+            # child_inds = range(len(np_children))
 
-            for move in gn_current.board(_cache=True).legal_moves:
+            for i in child_inds:
                 # Make the child
-                gn_child = chess.pgn.GameNode()
-                gn_child.parent = gn_current
-                gn_child.move = move
+                gn_child = children[i]
                 # Calculate node position
-                child_np_board, _ = Computer.alphabeta(gn_child, comparator, depth-1, alpha, beta, True)
-                if comparator.less(child_np_board, best_board):
+                child_np_board, _ = self.alphabeta(gn_child, depth-1, alpha, beta, True)
+                if best_board > child_np_board:
                     best_board = child_np_board
-                    best_move = move
+                    best_move = gn_child.move
 
                     # See if we need to change the beta
-                    if comparator.less(best_board, beta):
+                    if beta > best_board:
                         beta = best_board
 
                         # Check for alpha pruning
-                        if comparator.less_equal(beta, alpha):
+                        if beta <= alpha:
                             break
 
         return best_board, best_move
@@ -144,33 +169,33 @@ class Human(Player):
 
         return gn_new
 
-#
-# class Sunfish(Player):
-#     def __init__(self, secs=1):
-#         self._searcher = sunfish.Searcher()
-#         self._pos = sunfish.Position(sunfish.initial, 0, (True,True), (True,True), 0, 0)
-#         self._secs = secs
-#
-#     def move(self, gn_current):
-#         import sunfish
-#
-#         assert(gn_current.board().turn == False)
-#
-#         # Apply last_move
-#         crdn = str(gn_current.move)
-#         move = (sunfish.parse(crdn[0:2]), sunfish.parse(crdn[2:4]))
-#         self._pos = self._pos.move(move)
-#
-#         t0 = time.time()
-#         move, score = self._searcher.search(self._pos, self._secs)
-#         print("Time %s : Move %s : Score %s" % (time.time() - t0, move, score))
-#         self._pos = self._pos.move(move)
-#
-#         crdn = sunfish.render(119-move[0]) + sunfish.render(119 - move[1])
-#         move = create_move(gn_current.board(), crdn)
-#
-#         gn_new = chess.pgn.GameNode()
-#         gn_new.parent = gn_current
-#         gn_new.move = move
-#
-#         return gn_new
+
+class Sunfish(Player):
+    def __init__(self, secs=1):
+        self._searcher = sunfish.Searcher()
+        self._pos = sunfish.Position(sunfish.initial, 0, (True,True), (True,True), 0, 0)
+        self._secs = secs
+
+    def move(self, gn_current):
+        import sunfish
+
+        assert(gn_current.board().turn == False)
+
+        # Apply last_move
+        crdn = str(gn_current.move)
+        move = (sunfish.parse(crdn[0:2]), sunfish.parse(crdn[2:4]))
+        self._pos = self._pos.move(move)
+
+        t0 = time.time()
+        move, score = self._searcher.search(self._pos, self._secs)
+        print("Time %s : Avg Secs %s : Move %s : Score %s" % (time.time() - t0, self._secs, move, score))
+        self._pos = self._pos.move(move)
+
+        crdn = sunfish.render(119-move[0]) + sunfish.render(119 - move[1])
+        move = create_move(gn_current.board(), crdn)
+
+        gn_new = chess.pgn.GameNode()
+        gn_new.parent = gn_current
+        gn_new.move = move
+
+        return gn_new

@@ -6,6 +6,7 @@ import numpy as np
 import sunfish
 import heapq
 import traceback
+import random
 
 from keras.models import load_model
 
@@ -13,9 +14,9 @@ import models
 
 from np_board_utils import sb2array, WIN, LOSS
 from comparators import DeepJetChess
-from players import Computer, Human
+from players import Computer, Human, Sunfish
 
-model_func = models.incpetion_net
+model_func = models.conv10layer
 sd = os.getcwd()
 wd = os.path.join(sd, '..')
 od = os.path.join(wd, 'models')
@@ -25,6 +26,7 @@ model_file = os.path.join(od, '{name}_{years}_weights.h5').format(name=model_fun
                                                                   years="_".join(years))
 
 MAXD = 3
+CACHE_SIZE=20000
 
 def game(player_a, player_b):
     # Initialize the game
@@ -62,16 +64,16 @@ def game(player_a, player_b):
 
 def play():
     print("Loading the model")
-    model = model_func()
-    model.load_weights(model_file)
+    embedder, comparer = model_func(optimizer=None, mode='play')
+    comparator = DeepJetChess(embedder, comparer, cache_size=CACHE_SIZE)
+    comparator.load_weights(model_file)
+    player_a = Computer(comparator, maxd=MAXD)
     print("Model Loaded!")
-    # model.save(model_file + ".compiled")
-    # model = load_model(model_file + ".compiled")
 
     maxd = MAXD
     while True:
-        player_a = Computer(DeepJetChess(model), maxd=MAXD)
-        player_b = Human()
+        secs = random.random() * 4
+        player_b = Sunfish(secs=secs)
         print("Starting Game")
         side, times = game(player_a, player_b)
         f = open('../stats.txt', 'a')

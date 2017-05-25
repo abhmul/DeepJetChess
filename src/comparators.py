@@ -1,3 +1,5 @@
+from cachetools import LRUCache
+import numpy as np
 from np_board_utils import create_input
 
 class Comparator(object):
@@ -48,8 +50,34 @@ class Comparator(object):
 
 class DeepJetChess(Comparator):
 
-    def __init__(self, model):
-        self.model = model
+    def __init__(self, embedder, comparer, cache=None, cache_size=None):
+        self.embedder = embedder
+        self.comparer = comparer
+        # This cache only stores zobrist hashes, since with 16 byte
+        # hashes, there is 1 in 1.84e19 of a collision
+        self._cache = LRUCache(maxsize=cache_size) if cache is None else cache
+
+    def load_weights(self, weights_path):
+        self.embedder.load_weights(weights_path, by_name=True)
+        self.comparer.load_weights(weights_path, by_name=True)
+
+    def _filter_uncached(self, np_boards):
+        return [np_board for np_board in np_boards if hash(np_board) not in self._cache]
+
+    def embed(self, orig_np_boards):
+        np_boards = self._filter_uncached(orig_np_boards)
+        # Just return if we've already seen all of these boards
+        if len(np_boards) == 0:
+            return
+
+        batch = np.concatenate([np_board.create_input() for np_board in np_boards], axis=0)
+        # Make sure the batch was created properly
+        assert(batch.shape == (len(np_boards), 8, 8, 13))
+
+        posvecs = self.embedder.predict_on_batch(batch)
+        # Cache the outputs
+        for i, np_board in enumerate(np_boards):
+            self._cache[hash(np_board)] = posvecs[i]
 
     def compare(self, a, b):
         """
@@ -72,7 +100,11 @@ class DeepJetChess(Comparator):
         # Make sure we were passed valid inputs
         assert(a.np_board.shape == (8, 8) and b.np_board.shape == (8, 8))
 
-        # No edge case, we need to prepare a and b for model
-        a_in = a.create_input()
-        b_in = b.create_input()
-        return self.model.predict_on_batch([a_in, b_in])[0] * 2 - 1
+        # No edge case, we need to get the cached embeddings for a and b
+        if hash(a) not in self._cache:
+            a_embedding = self.embed([a])
+        if hash(b) not in self._cache:
+            b_embedding = self.embed([b])
+        a_embedding = self._cache[hash(a)][np.newaxis]
+        b_embedding = self._cache[hash(b)][np.newaxis]
+        return self.comparer.predict_on_batch([a_embedding, b_embedding])[0] * 2 - 1
