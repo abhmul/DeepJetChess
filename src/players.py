@@ -1,4 +1,5 @@
 import time
+import numpy as np
 
 import chess
 import chess.pgn
@@ -7,6 +8,7 @@ import sunfish
 from np_board_utils import sb2array, NpBoard, WIN, LOSS
 
 MAXD = 1
+TOPK = 5
 
 def make_gn_child(gn_current, move):
     gn_child = chess.pgn.GameNode()
@@ -28,10 +30,13 @@ class Player(object):
 
 
 class Computer(Player):
-    def __init__(self, comparator, maxd=MAXD):
+    def __init__(self, comparator, maxd=MAXD, topk=TOPK, sort=False):
         self._comparator = comparator
         self._gn = None
         self._maxd = maxd
+        self._topk = topk
+        self._sort = sort
+        assert(self._sort or self._topk is not None)
 
     @property
     def _cache(self):
@@ -89,9 +94,15 @@ class Computer(Player):
         if maximizing_player:
             # We need to initialize
             best_board = LOSS
-            # Sort the child boards inds
-            child_inds = sorted(range(len(np_children)), key=lambda i: np_children[i], reverse=True)
-            # child_inds = range(len(np_children))
+
+            if self._sort:
+                child_inds = sorted(range(len(np_children)), key=lambda i: np_children[i], reverse=True)
+            else:
+                # Get the topk child boards inds
+                child_inds = np.argpartition(np_children, len(np_children) - self._topk - 1)[::-1]
+            if self._topk is not None:
+                # Filter out the best k moves
+                child_inds = child_inds[:self._topk]
 
             for i in child_inds:
                 # Make the child
@@ -114,9 +125,16 @@ class Computer(Player):
         else:
             # We need to initialize
             best_board = WIN
+
             # Sort the child boards inds
-            child_inds = sorted(range(len(np_children)), key=lambda i: np_children[i])
-            # child_inds = range(len(np_children))
+            if self._sort:
+                child_inds = sorted(range(len(np_children)), key=lambda i: np_children[i])
+            else:
+                # Get the topk child boards inds
+                child_inds = np.argpartition(np_children, self._topk)
+            if self._topk is not None:
+                # Filter out the best k moves
+                child_inds = child_inds[:self._topk]
 
             for i in child_inds:
                 # Make the child

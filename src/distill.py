@@ -48,7 +48,7 @@ best_model = ModelCheckpoint(distilled_file, monitor='val_loss', mode='min', ver
 plotter = Plotter()
 model = model_func(optimizer, include_rights=INCLUDE_RIGHTS, mode='distill')
 model.load_weights(model_file)
-model.save_weights(model_file)
+# model.save_weights(model_file) # Uncomment this to rename layers
 # Allow us to generate data asynchrounoulsy
 graph = tf.get_default_graph()
 global graph

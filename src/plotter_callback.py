@@ -4,11 +4,12 @@ import numpy as np
 
 class Plotter(keras.callbacks.Callback):
 
-    def __init__(self):
+    def __init__(self, scale='linear'):
         super().__init__()
         plt.ion()
         self.fig = plt.figure()
         self.ax = self.fig.add_subplot(111)
+        self.ax.set_yscale(scale)
         self.x = []
         self.y_train = []
         self.y_val = []

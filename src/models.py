@@ -47,7 +47,7 @@ def cascade_net(num_filters=128, embedding_size=128, include_rights=True):
 
 # Current net does not use bn. Retrain and then change this param to true
 # Ep41 - loss: 0.1330 - acc: 0.9439 - val_loss: 0.1417 - val_acc: 0.9400
-def conv_tower(num_filters=128, embedding_size=128, include_rights=True, bn=False):
+def conv_tower(num_filters=128, embedding_size=128, include_rights=True, bn=True):
     input_img = Input(shape=(8, 8, 17)) if include_rights else Input(shape=(8, 8, 13))
 
     # Block 0 - Square View
