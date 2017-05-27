@@ -9,6 +9,11 @@ import traceback
 import random
 from datetime import date
 
+try:
+   import cPickle as pickle
+except:
+   import pickle
+
 from keras.models import load_model
 
 import models
@@ -17,7 +22,7 @@ from np_board_utils import sb2array, WIN, LOSS
 from comparators import DeepJetChess
 from players import Computer, Human, Sunfish
 
-model_func = models.conv10layer
+model_func = models.conv_comparator
 sd = os.getcwd()
 wd = os.path.join(sd, '..')
 od = os.path.join(wd, 'models')
@@ -26,30 +31,41 @@ years = [str(y) for y in [2013, 2014, 2015, 2016]]
 model_file = os.path.join(od, '{name}_{years}_weights.h5').format(name=model_func.__name__,
                                                                   years="_".join(years))
 
-MAXD = 1
-TOPK=None
-CACHE_SIZE=20000
+MAXD = 5
+TOPK=4
+SORT=False
+if TOPK is None:
+    SORT = True
+CACHE_SIZE=1000000
 
-def dump_game(gn_final, side, write_file):
+def dump_game(gn_final, side, write_filename):
 
-    gn_final.headers["Event"] = "DeepJetChess VS Sunfish"
-    gn_final.headers["Site"] = "Abhijeet's Laptop"
-    gn_final.headers["Date"] = date.today().strftime("%Y-%m-%d")
-    gn_final.headers["White"] = "DeepJetChess"
-    gn_final.headers["Black"] = "Sunfish"
+    # record the Result
+    gn_root = gn_final.root()
     if side == 'A':
-        gn_final.headers["Result"] = "1-0"
+        gn_root.headers["Result"] = "1-0"
     elif side == 'B':
-        gn_final.headers["Result"] = "0-1"
+        gn_root.headers["Result"] = "0-1"
     else:
-        gn_final.headers["Result"] = "1/2-1/2"
-    print(gn_final, file=write_file, end="\n\n")
+        gn_root.headers["Result"] = "1/2-1/2"
+
+    with open(write_filename, 'a') as write_file:
+        print(gn_final, file=write_file, end="\n\n")
 
     return True
 
 def game(player_a, player_b, write_game=True):
     # Initialize the game
-    gn_current = chess.pgn.Game()
+    gn_root = chess.pgn.Game()
+
+    # Record the stats
+    gn_root.headers["Event"] = "DeepJetChess VS Sunfish"
+    gn_root.headers["Site"] = "Abhijeet's Laptop"
+    gn_root.headers["Date"] = date.today().strftime("%Y-%m-%d")
+    gn_root.headers["White"] = "DeepJetChess"
+    gn_root.headers["Black"] = "Sunfish"
+
+    gn_current = gn_root
 
     times = {'A': 0.0, 'B': 0.0}
     # Play until someone loses
@@ -89,12 +105,37 @@ def game(player_a, player_b, write_game=True):
                     dump_game(gn_current, side, "games.pgn")
                 return side, times
 
+def build_cache(size, dump_filename="board_cache.embeddings"):
+    embedder, comparer = model_func(optimizer=None, mode='play')
+    comparator = DeepJetChess(embedder, comparer, cache_size=float('inf'))
+    comparator.load_weights(model_file)
+    player_a = Computer(comparator, maxd=float('inf'), sort=SORT, topk=TOPK)
+    d = 1
+    while len(player_a._cache) < size:
+        print("Creating Cache for Depth %s" % d)
+        player_a._maxd = d
+        gn_root = chess.pgn.Game()
+        _ = player_a.move(gn_root)
+        print("Finished creating Cache for Depth %s" % d)
+        print("Cache Size: %s" % len(player_a._cache))
+        print('Dumping Cache')
+        with open(dump_filename, 'wb') as dump_file:
+            picke.dump(player_a.cache, dump_file)
+        print("Finished Dumping!")
+        d += 1
+    print("Cache building stopped at size %s" % len(player_a._cache))
+    return True
+
+
+
+
+
 def play():
     print("Loading the model")
     embedder, comparer = model_func(optimizer=None, mode='play')
     comparator = DeepJetChess(embedder, comparer, cache_size=CACHE_SIZE)
     comparator.load_weights(model_file)
-    player_a = Computer(comparator, maxd=MAXD)
+    player_a = Computer(comparator, maxd=MAXD, sort=SORT, topk=TOPK)
     print("Model Loaded!")
 
     maxd = MAXD
@@ -109,4 +150,5 @@ def play():
         f.close()
 
 if __name__ == "__main__":
-    play()
+    # play()
+    build_cache(CACHE_SIZE)

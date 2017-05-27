@@ -77,9 +77,18 @@ class Computer(Player):
             The best next move the search came up with
         """
 
-        if depth == 0 or gn_current.board(_cache=True).is_game_over():
+        if depth == 0:
             # Build the board array and return
             return NpBoard(gn_current.board(), self._comparator), None
+        elif gn_current.board(_cache=True).is_game_over():
+            res = gn_current.board().result()
+            if res == "1-0":
+                return WIN, None if maximizing_player else LOSS, None
+            elif res == "0-1":
+                return LOSS, None if maximizing_player else WIN, None
+            else:
+                print("Result of leaf node is not win or loss: %s" % res)
+                return NpBoard(gn_current.board(), self._comparator), None
 
         # We need to initialize
         best_move = None
@@ -99,7 +108,7 @@ class Computer(Player):
                 child_inds = sorted(range(len(np_children)), key=lambda i: np_children[i], reverse=True)
             else:
                 # Get the topk child boards inds
-                child_inds = np.argpartition(np_children, len(np_children) - self._topk - 1)[::-1]
+                child_inds = np.argpartition(np_children, -min(self._topk, len(children)))[::-1]
             if self._topk is not None:
                 # Filter out the best k moves
                 child_inds = child_inds[:self._topk]
@@ -131,7 +140,7 @@ class Computer(Player):
                 child_inds = sorted(range(len(np_children)), key=lambda i: np_children[i])
             else:
                 # Get the topk child boards inds
-                child_inds = np.argpartition(np_children, self._topk)
+                child_inds = np.argpartition(np_children, min(self._topk, len(children)-1))
             if self._topk is not None:
                 # Filter out the best k moves
                 child_inds = child_inds[:self._topk]

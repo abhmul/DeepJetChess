@@ -1,5 +1,5 @@
 import os
-from keras.callbacks import ModelCheckpoint, LearningRateScheduler
+from keras.callbacks import ModelCheckpoint, ReducecLROnPlateau
 from keras.optimizers import SGD, RMSprop, Adam
 from dataprocessor5 import DataProcessor, VERBOSITY
 import models
@@ -40,12 +40,13 @@ traingen, valgen = dp.create_gen(batch_size=BATCH_SIZE, test_split=0.15, random_
     # next(valgen)
     # input("Continue?")
 
-optimizer = SGD(lr=0.0001, momentum=0.9, nesterov=True)
+optimizer = SGD(lr=0.0001 * .3, momentum=0.9, nesterov=True)
 # optimizer = Adam(lr=0.00001)
 # optimizer=None
 # This will save the best scoring model weights to the parent directory
 best_model = ModelCheckpoint(model_file, monitor='val_acc', mode='max', verbose=1, save_best_only=True,
                              save_weights_only=True)
+reduce_lr = ReducecLROnPlateau(monitor='val_loss', factor=0.3, patience=5, verbose=1)
 plotter = Plotter()
 model = model_func(optimizer, include_rights=INCLUDE_RIGHTS)
 model.load_weights(model_file)
@@ -53,6 +54,6 @@ print(model.summary())
 
 print("Fitting model")
 fit = model.fit_generator(traingen, steps_per_epoch=EPOCH_STEPS,
-                          epochs=200, verbose=1, callbacks=[best_model, plotter],
+                          epochs=200, verbose=1, callbacks=[best_model, plotter, reduce_lr],
                           validation_data=valgen, validation_steps=VAL_STEPS,
-                          initial_epoch=100)
+                          initial_epoch=121)

@@ -47,7 +47,7 @@ def cascade_net(num_filters=128, embedding_size=128, include_rights=True):
 
 # Current net does not use bn. Retrain and then change this param to true
 # Ep41 - loss: 0.1330 - acc: 0.9439 - val_loss: 0.1417 - val_acc: 0.9400
-def conv_tower(num_filters=128, embedding_size=128, include_rights=True, bn=True):
+def conv_tower(num_filters=128, embedding_size=128, include_rights=False, bn=True):
     input_img = Input(shape=(8, 8, 17)) if include_rights else Input(shape=(8, 8, 13))
 
     # Block 0 - Square View
@@ -95,7 +95,7 @@ def conv_tower(num_filters=128, embedding_size=128, include_rights=True, bn=True
 
     return Model(inputs=input_img, outputs=output, name='embedder')
 
-def distilled_conv_tower(num_filters=128, embedding_size=128, include_rights=True, bn=True):
+def distilled_conv_tower(num_filters=128, embedding_size=128, include_rights=False, bn=True):
 
     input_img = Input(shape=(8, 8, 17)) if include_rights else Input(shape=(8, 8, 13))
 
@@ -120,7 +120,7 @@ def distilled_conv_tower(num_filters=128, embedding_size=128, include_rights=Tru
 
 # Comparators
 
-def full_comparator(tower_func, optimizer=None, include_rights=True, embed=False):
+def full_comparator(tower_func, optimizer=None, include_rights=False, embed=False):
 
     b1 = Input(shape=(8, 8, 17)) if include_rights else Input(shape=(8, 8, 13))
     b2 = Input(shape=(8, 8, 17)) if include_rights else Input(shape=(8, 8, 13))
@@ -149,7 +149,7 @@ def full_comparator(tower_func, optimizer=None, include_rights=True, embed=False
 
     return model
 
-def split_comparator(tower_func, include_rights=True):
+def split_comparator(tower_func, include_rights=False):
 
     b = Input(shape=(8, 8, 17)) if include_rights else Input(shape=(8, 8, 13))
     tower = tower_func(include_rights=include_rights)
@@ -165,7 +165,7 @@ def split_comparator(tower_func, include_rights=True):
 
     return embedder, comparer
 
-def comparator(tower_func, optimizer=None, include_rights=True, mode='train'):
+def comparator(tower_func, optimizer=None, include_rights=False, mode='train'):
     if mode == 'play':
         return split_comparator(tower_func, include_rights)
     elif mode == 'distill':
@@ -173,11 +173,11 @@ def comparator(tower_func, optimizer=None, include_rights=True, mode='train'):
     else:
         return full_comparator(tower_func, optimizer, include_rights)
 
-def conv_comparator(optimizer=None, include_rights=True, mode='train'):
+def conv_comparator(optimizer=None, include_rights=False, mode='train'):
 
     return comparator(conv_tower, optimizer, include_rights, mode)
 
-def distilled_conv_comparator(optimizer=None, include_rights=True, mode='train'):
+def distilled_conv_comparator(optimizer=None, include_rights=False, mode='train'):
 
     return comparator(distilled_conv_tower, optimizer, include_rights, mode)
 
