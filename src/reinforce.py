@@ -102,7 +102,7 @@ def run_n_games(learner, opponent, num_games):
 
 class ReinforcementLearner(object):
 
-    def __init__(self, initial_net, optimizer, batch_size=16):
+    def __init__(self, initial_net, optimizer, batch_size=64):
         self.prev_net_pool = PrevNetPool(Opponent(deepcopy(initial_net.net), name="PrevNet"))
         self.curr_net = initial_net
         self.batch_counter = 0
@@ -146,12 +146,6 @@ if __name__ == "__main__":
     initial_net = Learner(alpha_chess, name="Learner")
     initial_net.load_state(os.path.join(OUTPUT, "alpha_chess2_epoch13_weights.state"))
     initial_net.name = "Learner"
-
-    # Create the opponent model
-    # alpha_chess2 = deepcopy(alpha_chess)
-    # prev_net = Opponent(alpha_chess2, name="PrevNet")
-    # prev_net.load_state(os.path.join(OUTPUT, "alpha_chess2_epoch13_weights.state"))
-    # prev_net.name = "PrevNet"
 
     sgd = optim.SGD(alpha_chess.parameters(), lr=0.001)
 
