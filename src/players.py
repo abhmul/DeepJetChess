@@ -1,14 +1,13 @@
+import os
 import time
 import numpy as np
 
 import chess
 import chess.pgn
 import sunfish
+import tools
 
-from np_board_utils import sb2array, NpBoard, WIN, LOSS
-
-MAXD = 1
-TOPK = 5
+from np_board_utils import sb2array, NpBoard, WIN, LOSS, switch_input_sides, split_boards, square2ind
 
 def make_gn_child(gn_current, move):
     gn_child = chess.pgn.GameNode()
@@ -19,207 +18,182 @@ def make_gn_child(gn_current, move):
 def create_move(board, crdn):
     # workaround for pawn promotions
     move = chess.Move.from_uci(crdn)
+    print(board)
+    print(move.from_square)
+    print(move.to_square)
     if board.piece_at(move.from_square).piece_type == chess.PAWN:
         if int(move.to_square/8) in [0, 7]:
             move.promotion = chess.QUEEN # always promote to queen
     return move
 
+def create_input(gn_children):
+    np_legal_move_boards = np.empty((len(gn_children), 8, 8))
+    model_input = np.zeros((len(gn_children), 8, 8, 17))
+    for i, gn_child in enumerate(gn_children):
+        child_board = gn_child.board()
+        np_legal_move_boards[i] = sb2array(str(child_board))
+        # Set castling rights
+        if child_board.has_kingside_castling_rights(chess.WHITE):
+            model_input[i, :, :, 12] = 1
+        if child_board.has_queenside_castling_rights(chess.WHITE):
+            model_input[i, :, :, 13] = 1
+        if child_board.has_kingside_castling_rights(chess.BLACK):
+            model_input[i, :, :, 14] = 1
+        if child_board.has_queenside_castling_rights(chess.BLACK):
+            model_input[i, :, :, 15] = 1
+        # Set the en passant square
+        if child_board.has_legal_en_passant():
+            row, col = square2ind(child_board.ep_square)
+            model_input[i, row, col, 16] = 1
+    model_input[:, :, :, :12] = split_boards(np_legal_move_boards)
+    return model_input
+
 class Player(object):
     def move(self, gn_current):
         raise NotImplementedError()
 
+class Net(Player):
 
-class Computer(Player):
-    def __init__(self, comparator, maxd=MAXD, topk=TOPK, sort=False):
-        self._comparator = comparator
+    def __init__(self, net, name="Net"):
+        self.net = net
+        self.net.cast_model_to_cuda()
         self._gn = None
-        self._maxd = maxd
-        self._topk = topk
-        self._sort = sort
-        assert(self._sort or self._topk is not None)
-
-    @property
-    def _cache(self):
-        return self._comparator._cache
+        self.name = name
+        self.__result_map = {"1-0": 1, "0-1": -1, "1/2-1/2": 0}
 
     def move(self, gn_current):
-        # assert(gn_current.board(_cache=True).turn == True)
 
         self._gn = gn_current
-
-        alpha = LOSS
-        beta = WIN
-
-        depth = self._maxd
         t0 = time.time()
-        # Board in array format
-        # Move in python-chess format
-        best_board, best_move = self.alphabeta(self._gn, depth, LOSS, WIN, self._gn.board(_cache=True).turn)
-        print("Depth %s : Move %s : Time %s : Cache Size %s" %(depth, best_move, time.time() - t0, len(self._cache)))
-
-        gn_new = chess.pgn.GameNode()
-        gn_new.parent = gn_current
-        gn_new.move = best_move
-
-        return gn_new
-
-    def alphabeta(self, gn_current, depth, alpha, beta, maximizing_player):
-        """
-        Runs position alpha-beta pruning using comparator to compare positions
-        Arguments:
-            gn_current -- The current game node (pgn python-chess format)
-            depth -- Max depth to search the tree
-            alpha -- The node's alpha value (a numpy board)
-            beta -- The node's beta value (a numpy board)
-            maximizing_player -- Whether this node is to be max'd or min'd
-        Returns:
-            The best next position the search came up with (as an NpBoard)
-            The best next move the search came up with
-        """
-
-        if depth == 0:
-            # Build the board array and return
-            return NpBoard(gn_current.board(), self._comparator), None
-        elif gn_current.board(_cache=True).is_game_over():
-            res = gn_current.board().result()
-            if res == "1-0":
-                return WIN, None if maximizing_player else LOSS, None
-            elif res == "0-1":
-                return LOSS, None if maximizing_player else WIN, None
-            else:
-                print("Result of leaf node is not win or loss: %s" % res)
-                return NpBoard(gn_current.board(), self._comparator), None
-
-        # We need to initialize
-        best_move = None
-
         # Get all the children
-        children = [make_gn_child(gn_current, move) for move in gn_current.board(_cache=True).legal_moves]
+        gn_children = [make_gn_child(gn_current, move) for move in gn_current.board(_cache=True).legal_moves]
+        # Check if any of the moves are a win and return if so
+        for i, gn_child in enumerate(gn_children):
+            if gn_child.board(_cache=True).is_game_over() and gn_child.board().result() in {"0-1", "1-0"}:
+                return gn_child
+        # Turn them into numpy arrays
+        model_input = create_input(gn_children)
+        # If the side is black, switch it
+        if gn_current.board().turn == chess.BLACK:
+            model_input = switch_input_sides(model_input)
+        # Turn into pytorch format
+        model_input = model_input.transpose(0, 3, 1, 2)
+        # Score the positions
+        prob_dist = self.net.predict_on_batch([model_input])[0]
+        # Print the top moves and their probs for logging
+        # sorted_prob_dist_inds = np.argsort(prob_dist)[::-1][:5]
+        # print("Original Board:")
+        # print(gn_current.board())
+        # for ind in sorted_prob_dist_inds:
+        #     print("p = ", prob_dist[ind])
+        #     print(gn_children[ind].board(), '\n')
+        # print("\n")
 
-        # Cache their embeddings
-        np_children = [NpBoard(gn_child.board(), self._comparator) for gn_child in children]
-        self._comparator.embed(np_children)
+        # print(prob_dist.shape)
+        assert(prob_dist.shape == (len(gn_children),))
+        # Sample from the distribution
+        child_ind = np.random.choice(np.arange(len(gn_children)), p=prob_dist)
+        # child_ind = np.argmax(prob_dist)
+        # print("Time %s" % (time.time() - t0))
+        return gn_children[child_ind]
 
-        if maximizing_player:
-            # We need to initialize
-            best_board = LOSS
+    def save_state(self, fname):
+        self.net.save_state(fname)
 
-            if self._sort:
-                child_inds = sorted(range(len(np_children)), key=lambda i: np_children[i], reverse=True)
-            else:
-                # Get the topk child boards inds
-                child_inds = np.argpartition(np_children, -min(self._topk, len(children)))[::-1]
-            if self._topk is not None:
-                # Filter out the best k moves
-                child_inds = child_inds[:self._topk]
+    def load_state(self, fname):
+        self.name = os.path.splitext(os.path.basename(fname))[0]
+        self.net.load_state(fname)
 
-            for i in child_inds:
-                # Make the child
-                gn_child = children[i]
-                # Calculate node position
-                child_np_board, _ = self.alphabeta(gn_child, depth-1, alpha, beta, False)
-                # See if its better than the current max
-                if best_board < child_np_board:
-                    best_board = child_np_board
-                    best_move = gn_child.move
+    def cast_target_to_torch(self, y, volatile=False):
+        return self.net.cast_target_to_torch(y, volatile=volatile)
 
-                    # See if we need to change the alpha
-                    if alpha < best_board:
-                        alpha = best_board
+class Learner(Net):
 
-                        # Check for beta pruning
-                        if beta <= alpha:
-                            break
-
-        else:
-            # We need to initialize
-            best_board = WIN
-
-            # Sort the child boards inds
-            if self._sort:
-                child_inds = sorted(range(len(np_children)), key=lambda i: np_children[i])
-            else:
-                # Get the topk child boards inds
-                child_inds = np.argpartition(np_children, min(self._topk, len(children)-1))
-            if self._topk is not None:
-                # Filter out the best k moves
-                child_inds = child_inds[:self._topk]
-
-            for i in child_inds:
-                # Make the child
-                gn_child = children[i]
-                # Calculate node position
-                child_np_board, _ = self.alphabeta(gn_child, depth-1, alpha, beta, True)
-                if best_board > child_np_board:
-                    best_board = child_np_board
-                    best_move = gn_child.move
-
-                    # See if we need to change the beta
-                    if beta > best_board:
-                        beta = best_board
-
-                        # Check for alpha pruning
-                        if beta <= alpha:
-                            break
-
-        return best_board, best_move
-
-
-class Human(Player):
     def move(self, gn_current):
-        bb = gn_current.board()
+        self._gn = gn_current
+        t0 = time.time()
+        # Get all the children
+        gn_children = [make_gn_child(gn_current, move) for move in gn_current.board(_cache=True).legal_moves]
+        # Check if any of the moves are a win and return if so
+        for i, gn_child in enumerate(gn_children):
+            if gn_child.board(_cache=True).is_game_over() and gn_child.board().result() in {"0-1", "1-0"}:
+                return gn_child, i, None
+        # Turn them into numpy arrays
+        model_input = create_input(gn_children)
+        # If the side is black, switch it
+        if gn_current.board().turn == chess.BLACK:
+            model_input = switch_input_sides(model_input)
+        # Turn into pytorch format
+        model_input = model_input.transpose(0, 3, 1, 2)
+        # Compute the forward and store the gradients
+        torch_input = self.net.cast_input_to_torch([model_input])
+        torch_preds = self.net(torch_input)
+        # Score the positions
+        prob_dist = self.net.cast_output_to_numpy(torch_preds)[0]
+        assert(prob_dist.shape == (len(gn_children),))
+        assert(torch_preds[0].size(0) == prob_dist.shape[0] and len(torch_preds[0].size()) == 1)
+        # Sample from the distribution
+        child_ind = np.random.choice(np.arange(len(gn_children)), p=prob_dist)
+        return gn_children[child_ind], child_ind, torch_preds[0]
 
-        print("\nHUMAN\n")
-        print(str(bb)[::-1])
+class Opponent(Net):
 
-        def get_move(move_str):
-            try:
-                move = chess.Move.from_uci(move_str)
-            except:
-                print('cant parse')
-                return False
-            if move not in bb.legal_moves:
-                print('not a legal move')
-                return False
-            else:
-                return move
-
-        while True:
-            print('your turn:')
-            move = get_move(input())
-            if move:
-                break
-
-        gn_new = chess.pgn.GameNode()
-        gn_new.parent = gn_current
-        gn_new.move = move
-
-        return gn_new
-
+    def move(self, gn_current):
+        self._gn = gn_current
+        t0 = time.time()
+        # Get all the children
+        gn_children = [make_gn_child(gn_current, move) for move in gn_current.board(_cache=True).legal_moves]
+        # Check if any of the moves are a win and return if so
+        for i, gn_child in enumerate(gn_children):
+            if gn_child.board(_cache=True).is_game_over() and gn_child.board().result() in {"0-1", "1-0"}:
+                return gn_child, i, None
+        # Turn them into numpy arrays
+        model_input = create_input(gn_children)
+        # If the side is black, switch it
+        if gn_current.board().turn == chess.BLACK:
+            model_input = switch_input_sides(model_input)
+        # Turn into pytorch format
+        model_input = model_input.transpose(0, 3, 1, 2)
+        # Compute the forward and store the gradients
+        torch_input = self.net.cast_input_to_torch([model_input], volatile=True)
+        torch_preds = self.net(torch_input)
+        # Score the positions
+        prob_dist = self.net.cast_output_to_numpy(torch_preds)[0]
+        assert(prob_dist.shape == (len(gn_children),))
+        assert(torch_preds[0].size(0) == prob_dist.shape[0] and len(torch_preds[0].size()) == 1)
+        # Sample from the distribution
+        child_ind = np.random.choice(np.arange(len(gn_children)), p=prob_dist)
+        return gn_children[child_ind], child_ind,None
 
 class Sunfish(Player):
-    def __init__(self, secs=1):
+    def __init__(self, secs=1, initial_pos = None):
         self._searcher = sunfish.Searcher()
-        self._pos = sunfish.Position(sunfish.initial, 0, (True,True), (True,True), 0, 0)
+        if initial_pos is not None:
+            self._pos = tools.parseFEN(initial_pos.board().fen())
+        else:
+            self._pos = sunfish.Position(sunfish.initial, 0, (True,True), (True,True), 0, 0)
         self._secs = secs
 
     def move(self, gn_current):
-        import sunfish
 
-        assert(gn_current.board().turn == False)
+        # assert(gn_current.board().turn ==)
 
         # Apply last_move
-        crdn = str(gn_current.move)
-        move = (sunfish.parse(crdn[0:2]), sunfish.parse(crdn[2:4]))
-        self._pos = self._pos.move(move)
+        # crdn = str(gn_current.move)
+        # move = (sunfish.parse(crdn[0:2]), sunfish.parse(crdn[2:4]))
+        # self._pos = self._pos.move(move)
+
+        self._pos = tools.parseFEN(gn_current.board().fen())
 
         t0 = time.time()
         move, score = self._searcher.search(self._pos, self._secs)
-        print("Time %s : Avg Secs %s : Move %s : Score %s" % (time.time() - t0, self._secs, move, score))
+        san = tools.renderSAN(self._pos, move)
+        # print("Time %s : Avg Secs %s : Move %s : Score %s" % (time.time() - t0, self._secs, san, score))
         self._pos = self._pos.move(move)
 
-        crdn = sunfish.render(119-move[0]) + sunfish.render(119 - move[1])
-        move = create_move(gn_current.board(), crdn)
+        # crdn = sunfish.render(119-move[0]) + sunfish.render(119 - move[1])
+        # move = create_move(gn_current.board(), crdn)
+        move = gn_current.board().parse_san(san)
 
         gn_new = chess.pgn.GameNode()
         gn_new.parent = gn_current

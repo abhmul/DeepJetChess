@@ -1,59 +1,67 @@
 import os
-from keras.callbacks import ModelCheckpoint, ReducecLROnPlateau
-from keras.optimizers import SGD, RMSprop, Adam
-from dataprocessor5 import DataProcessor, VERBOSITY
-import models
 
-from plotter_callback import Plotter
+import torch.optim as optim
+from torch.autograd import Variable
 
+from chess_dataset import ChessDataset
+from torch_models import AlphaChess, chess_loss, accuracy
+from pyjet.data import DatasetGenerator
+import pyjet.backend as J
+from pyjet.callbacks import Plotter, ModelCheckpoint
+from pyjet.training import GeneratorEnqueuer
+
+# Define the globals
 BATCH_SIZE = 32
-EPOCH_STEPS = int((1000000 + BATCH_SIZE - 1) / BATCH_SIZE)
-# EPOCH_STEPS = 1
-VAL_STEPS = int(0.15 * EPOCH_STEPS) + 1
-INCLUDE_RIGHTS = False
-#
+EPOCHS = 200
 
-sd = os.getcwd()
-wd = os.path.join(sd, '..')
-od = os.path.join(wd, 'models')
+TRAIN_YEARS = [str(y) for y in [2010, 2011, 2013, 2014, 2015]]
+VAL_YEARS = [str(y) for y in [2016]]
 
-model_func = models.conv_comparator
-years = [str(y) for y in [2013, 2014, 2015, 2016]]
+SOURCE = os.getcwd()
+WORKING = os.path.join(SOURCE, '..')
+OUTPUT = os.path.join(WORKING, 'models')
 
-fn_ins = [os.path.join(wd, 'cvc_{year}.h5'.format(year=year)) for year in years]
-model_file = os.path.join(od, '{name}_{years}_weights.h5').format(name=model_func.__name__,
-                                                                  years="_".join(years))
+FN_IN = os.path.join(WORKING, 'cvc_{year}_more.h5')
+TRAIN_FN_INS = [FN_IN.format(year=year) for year in TRAIN_YEARS]
+VAL_FN_INS = [FN_IN.format(year=year) for year in VAL_YEARS]
 
-dp = DataProcessor(exclude_n=10, exclude_capture=True, include_rights=INCLUDE_RIGHTS, verbosity=VERBOSITY.VERBOSE)
-dp.load_many_h5(fn_ins)
+MODEL_FILE = os.path.join(OUTPUT, 'alpha_chess2_epoch{epoch}_weights.state')
+# SAVE_FILE =  MODEL_FILE.format(name="alpha_chess2",
+                            #    years="_".join(TRAIN_YEARS + VAL_YEARS))
 
-print("Total Dataset size:")
-print("\tWin Moves: %s" % dp.win_boards)
-print("\tLoss Moves: %s" % dp.loss_boards)
+# Load the train and val chess dataset
+train_dataset = ChessDataset()
+train_dataset.load_many_h5(TRAIN_FN_INS)
+val_dataset = ChessDataset()
+val_dataset.load_many_h5(VAL_FN_INS)
 
-traingen, valgen = dp.create_gen(batch_size=BATCH_SIZE, test_split=0.15, random_state=2346, flat=False)
+# Print some dataset metrics
+print("Number of Train Games: ", len(train_dataset))
+print("Number of Val Games: ", len(val_dataset))
 
-# for i in range(100):
-    # print("Train Gen")
-    # next(traingen)
-    # print("Val Gen")
-    # next(valgen)
-    # input("Continue?")
+# Instantiate the generators
+traingen = GeneratorEnqueuer(DatasetGenerator(train_dataset, batch_size=BATCH_SIZE, shuffle=True, seed=1234))
+valgen = GeneratorEnqueuer(DatasetGenerator(val_dataset, batch_size=BATCH_SIZE, shuffle=True, seed=1234))
+try:
+    # Start the parallel queue generation
+    traingen.start()
+    valgen.start()
 
-optimizer = SGD(lr=0.0001 * .3, momentum=0.9, nesterov=True)
-# optimizer = Adam(lr=0.00001)
-# optimizer=None
-# This will save the best scoring model weights to the parent directory
-best_model = ModelCheckpoint(model_file, monitor='val_acc', mode='max', verbose=1, save_best_only=True,
-                             save_weights_only=True)
-reduce_lr = ReducecLROnPlateau(monitor='val_loss', factor=0.3, patience=5, verbose=1)
-plotter = Plotter()
-model = model_func(optimizer, include_rights=INCLUDE_RIGHTS)
-model.load_weights(model_file)
-print(model.summary())
+    # Setup the model
+    alpha_chess = AlphaChess()
 
-print("Fitting model")
-fit = model.fit_generator(traingen, steps_per_epoch=EPOCH_STEPS,
-                          epochs=200, verbose=1, callbacks=[best_model, plotter, reduce_lr],
-                          validation_data=valgen, validation_steps=VAL_STEPS,
-                          initial_epoch=121)
+    # Setup the optimizer
+    sgd = optim.Adam(alpha_chess.parameters())
+
+    # This will save the best scoring model weights to the parent directory
+    best_model = ModelCheckpoint(MODEL_FILE, monitor='accuracy', monitor_val=True, mode='max',
+                                 verbose=1, save_best_only=False)
+    plotter = Plotter(scale='log', monitor='chess_loss')
+    callbacks = [best_model, plotter]
+
+    alpha_chess.fit_generator(traingen, EPOCHS, traingen._generator.steps_per_epoch, sgd, chess_loss,
+                              validation_generator=valgen, validation_steps=valgen._generator.steps_per_epoch,
+                              metrics=[accuracy], callbacks=callbacks)
+finally:
+    traingen.stop()
+    valgen.stop()

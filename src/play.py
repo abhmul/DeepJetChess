@@ -8,35 +8,26 @@ import heapq
 import traceback
 import random
 from datetime import date
+from tqdm import tqdm
 
 try:
    import cPickle as pickle
 except:
    import pickle
 
-from keras.models import load_model
-
-import models
+from torch_models import AlphaChess
 
 from np_board_utils import sb2array, WIN, LOSS
-from comparators import DeepJetChess
-from players import Computer, Human, Sunfish
+from players import Sunfish, Net
 
-model_func = models.conv_comparator
-sd = os.getcwd()
-wd = os.path.join(sd, '..')
-od = os.path.join(wd, 'models')
 
-years = [str(y) for y in [2013, 2014, 2015, 2016]]
-model_file = os.path.join(od, '{name}_{years}_weights.h5').format(name=model_func.__name__,
-                                                                  years="_".join(years))
 
-MAXD = 5
-TOPK=4
-SORT=False
-if TOPK is None:
-    SORT = True
-CACHE_SIZE=1000000
+SOURCE = os.getcwd()
+WORKING = os.path.join(SOURCE, '..')
+OUTPUT = os.path.join(WORKING, 'models')
+
+MODEL_FILE = os.path.join(OUTPUT, "alpha_chess_2010_2011_2013_2014_2015_2016_weights" + ".state")
+
 
 def dump_game(gn_final, side, write_filename):
 
@@ -59,10 +50,10 @@ def game(player_a, player_b, write_game=True):
     gn_root = chess.pgn.Game()
 
     # Record the stats
-    gn_root.headers["Event"] = "DeepJetChess VS Sunfish"
+    gn_root.headers["Event"] = "AlphaChess VS Sunfish"
     gn_root.headers["Site"] = "Abhijeet's Laptop"
     gn_root.headers["Date"] = date.today().strftime("%Y-%m-%d")
-    gn_root.headers["White"] = "DeepJetChess"
+    gn_root.headers["White"] = "AlphaChess"
     gn_root.headers["Black"] = "Sunfish"
 
     gn_current = gn_root
@@ -84,71 +75,69 @@ def game(player_a, player_b, write_game=True):
 
             times[side] += time.time() - t0
             # Log the board change
-            print('=========== Player %s: %s' % (side, gn_current.move))
-            s = str(gn_current.board(_cache=True))
-            print(s)
-            if gn_current.board(_cache=True).is_checkmate():
-                if write_game:
-                    dump_game(gn_current, side, "games.pgn")
-                return side, times
-            elif gn_current.board().is_stalemate():
-                if write_game:
-                    dump_game(gn_current, '-', "games.pgn")
-                return '-', times
-            elif gn_current.board().can_claim_fifty_moves():
-                if write_game:
-                    dump_game(gn_current, '-', "games.pgn")
-                return '-', times
-            elif s.find('K') == -1 or s.find('k') == -1:
-                # Both AI's suck at checkmating, so also detect capturing the king
-                if write_game:
-                    dump_game(gn_current, side, "games.pgn")
-                return side, times
+            # print('=========== Player %s: %s' % (side, gn_current.move))
+            # s = str(gn_current.board(_cache=True))
+            # print(s)
+            if gn_current.board().is_game_over():
+                return gn_current.board().result(), times
 
-def build_cache(size, dump_filename="board_cache.embeddings"):
-    embedder, comparer = model_func(optimizer=None, mode='play')
-    comparator = DeepJetChess(embedder, comparer, cache_size=float('inf'))
-    comparator.load_weights(model_file)
-    player_a = Computer(comparator, maxd=float('inf'), sort=SORT, topk=TOPK)
-    d = 1
-    while len(player_a._cache) < size:
-        print("Creating Cache for Depth %s" % d)
-        player_a._maxd = d
-        gn_root = chess.pgn.Game()
-        _ = player_a.move(gn_root)
-        print("Finished creating Cache for Depth %s" % d)
-        print("Cache Size: %s" % len(player_a._cache))
-        print('Dumping Cache')
-        with open(dump_filename, 'wb') as dump_file:
-            picke.dump(player_a.cache, dump_file)
-        print("Finished Dumping!")
-        d += 1
-    print("Cache building stopped at size %s" % len(player_a._cache))
-    return True
-
-
-
-
-
-def play():
-    print("Loading the model")
-    embedder, comparer = model_func(optimizer=None, mode='play')
-    comparator = DeepJetChess(embedder, comparer, cache_size=CACHE_SIZE)
-    comparator.load_weights(model_file)
-    player_a = Computer(comparator, maxd=MAXD, sort=SORT, topk=TOPK)
+def play(model_num, games=200):
+    model_name = "alpha_chess2_epoch{}_weights.state".format(model_num)
+    print("Loading the model: ", model_name)
+    alpha_chess = AlphaChess()
+    player_a = Net(alpha_chess, name="AlphaChess")
+    player_a.load_state(os.path.join(OUTPUT, model_name))
+    alpha_chess2 = AlphaChess()
+    reward_sum = 0
+    net_times = 0
+    sunfish_times = 0
+    # player_b = Net(alpha_chess2, name="AlphaChess")
+    # player_b.load_state(os.path.join(OUTPUT, "alpha_chess_2010_2011_2013_2014_2015_2016_weights" + ".state"))
     print("Model Loaded!")
-
-    maxd = MAXD
-    while True:
-        # secs = random.random() * 4
-        secs=1
+    for i in tqdm(range(games)):
+        secs = random.random() * .001
+        # secs=.1
         player_b = Sunfish(secs=secs)
-        print("Starting Game")
-        side, times = game(player_a, player_b)
-        f = open('../stats.txt', 'a')
-        f.write('%s %f %f\n' % (side, times['A'], times['B']))
-        f.close()
+        # print("Starting Game")
+        reward = 0
+        if i % 2 == 0:
+            result, times = game(player_a, player_b)
+            if result == "1-0":
+                reward = 1
+            elif result == "0-1":
+                reward = -1
+            # print("%s : %s  %f : %s %f" % (reward, "N", times['A'], "S", times['B']))
+            net_times += times['A']
+            sunfish_times += times['B']
+        else:
+            result, times = game(player_b, player_a)
+            if result == "1-0":
+                reward = -1
+            elif result == "0-1":
+                reward = 1
+            # print("%s : %s  %f : %s %f" % (reward, "N", times['B'], "S", times['A']))
+            net_times += times['B']
+            sunfish_times += times['A']
+        reward_sum += reward
+    print("\tAverage Reward for %s: %f" % (model_num, reward_sum / games))
+    print("\tAverage Net Time for %s: %f" % (model_num, net_times / games))
+    print("\tAverage Sunfish Time for %s: %f" % (model_num, sunfish_times / games))
+        # if result == "1/2-1/2":
+        #     winner = "-"
+        # f = open('../stats{}.txt'.format(model_num), 'a')
+        # f.write('%s %f %f\n' % (winner, times['A'], times['B']))
+        # f.close()
 
 if __name__ == "__main__":
-    # play()
-    build_cache(CACHE_SIZE)
+    for i in range(20):
+        play(i, games=500)
+    # embedder, comparer = model_func(optimizer=None, mode='play')
+    # comparator = DeepJetChess(embedder, comparer, cache_size=CACHE_SIZE)
+    # comparator.load_weights(model_file)
+
+    # for depths in range(1, 6):
+        # player = Computer(comparator, maxd=depths, sort=SORT, topk=TOPK)
+
+        # secs=1
+        # player = Sunfish(secs=secs)
+        # elo_test(player)
