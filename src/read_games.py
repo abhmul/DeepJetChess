@@ -28,11 +28,9 @@ parser.add_argument('h5_fname_out',
                    help='the h5 fname to parse the games into')
 parser.add_argument('pgn_fname_ins', type=str, nargs='+',
                    help='The pgns to parse')
-parser.add_argument('-q', '--qsize', type=int, default=1000,
-                   help='The size of the shared buffer')
 parser.add_argument('-i', '--hsize', type=int, default=1e6,
                    help='The size of the shared buffer')
-parser.add_argument('-p', '--processes', type=int, default=(cpu_count()-1),
+parser.add_argument('-p', '--processes', type=int, default=0,
                    help='The number of processes to run on')
 parser.add_argument('-l', '--log_interval', type=int, default=1000,
                    help='Will cause program to log every n games')
