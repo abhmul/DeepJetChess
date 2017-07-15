@@ -15,7 +15,7 @@ try:
 except:
    import pickle
 
-from torch_models import AlphaChess
+from torch_models import SimpleModel2 as model_class
 
 from np_board_utils import sb2array, WIN, LOSS
 from players import Sunfish, Net
@@ -82,12 +82,13 @@ def game(player_a, player_b, write_game=True):
                 return gn_current.board().result(), times
 
 def play(model_num, games=200):
-    model_name = "alpha_chess2_epoch{}_weights.state".format(model_num)
+    # model_name = "alpha_chess2_epoch{}_weights.state".format(model_num)
+    model_name = "test_{}_epoch{}_weights.state".format(model_class.name, model_num)
     print("Loading the model: ", model_name)
-    alpha_chess = AlphaChess()
+    alpha_chess = model_class()
     player_a = Net(alpha_chess, name="AlphaChess")
     player_a.load_state(os.path.join(OUTPUT, model_name))
-    alpha_chess2 = AlphaChess()
+    alpha_chess2 = model_class()
     reward_sum = 0
     net_times = 0
     sunfish_times = 0
@@ -122,6 +123,7 @@ def play(model_num, games=200):
     print("\tAverage Reward for %s: %f" % (model_num, reward_sum / games))
     print("\tAverage Net Time for %s: %f" % (model_num, net_times / games))
     print("\tAverage Sunfish Time for %s: %f" % (model_num, sunfish_times / games))
+    return reward_sum / games
         # if result == "1/2-1/2":
         #     winner = "-"
         # f = open('../stats{}.txt'.format(model_num), 'a')
@@ -129,8 +131,14 @@ def play(model_num, games=200):
         # f.close()
 
 if __name__ == "__main__":
-    for i in range(20):
-        play(i, games=500)
+    xs = []
+    ys = []
+    for i in range(50, -1, -1):
+        xs.append(i)
+        ys.append(play(i, games=50))
+
+    import matplotlib.pyplot as plt
+    plt.plot(xs, ys)
     # embedder, comparer = model_func(optimizer=None, mode='play')
     # comparator = DeepJetChess(embedder, comparer, cache_size=CACHE_SIZE)
     # comparator.load_weights(model_file)

@@ -18,6 +18,16 @@ def chess_loss(y_pred, target, size_average=True):
     loss_sum = sum(categorical_crossentropy(y_pred[i].view(1, -1), target[i:i+1]) for i in range(len(y_pred)))
     return loss_sum / len(y_pred) if size_average else loss_sum
 
+def chess_loss2(y_pred, target, size_average=True):
+    """
+    B x N_i
+    B
+    """
+    assert(len(y_pred) == target.size(0))
+    loss_sum = sum(categorical_crossentropy(y_pred[i][0].view(1, -1), target[i:i+1]) for i in range(len(y_pred)))
+    # loss_sum += sum(categorical_crossentropy(y_pred[i][1].view(1, -1), target[i:i+1]) for i in range(len(y_pred)))
+    return loss_sum / len(y_pred) if size_average else loss_sum
+
 def accuracy(y_pred, target, k=1):
     """Computes the precision@k for the specified values of k"""
     maxk = k
@@ -25,7 +35,7 @@ def accuracy(y_pred, target, k=1):
     # y_pred = [sample.data for sample in y_pred]
     # target = target.data
 
-    _, pred = zip(*[output_vec.topk(maxk, 0, True, True) for output_vec in y_pred])
+    _, pred = zip(*[output_vec[0].topk(maxk, 0, True, True) for output_vec in y_pred])
     pred = torch.cat(pred).view(-1, 1)
     pred = pred.t()
     correct = pred.eq(target.view(1, -1).expand_as(pred))
@@ -34,7 +44,33 @@ def accuracy(y_pred, target, k=1):
     res = (correct_k.mul_(100.0 / batch_size))
     return res
 
-class AlphaChess(SLModel):
+def avg_prob(y_pred, target):
+    return sum(y_pred[i][0][target[i].data] for i in range(len(y_pred))) / len(y_pred)
+
+def avg_val(y_pred, target):
+    return sum(y_pred[i][1][target[i].data] for i in range(len(y_pred))) / len(y_pred)
+
+def avg_min_prob(y_pred, target):
+    return sum(y_pred[i][0].min() for i in range(len(y_pred))) / len(y_pred)
+
+def avg_min_val(y_pred, target):
+    return sum(y_pred[i][1].min() for i in range(len(y_pred))) / len(y_pred)
+
+class ChessModel(SLModel):
+    def __init__(self):
+        super(ChessModel, self).__init__()
+
+    def forward(self, x_boards):
+        raise NotImplementedError
+
+    def cast_input_to_torch(self, x, volatile=False):
+        return [Variable(J.Tensor(x_sample), volatile=volatile) for x_sample in x]
+
+    def cast_output_to_numpy(self, preds):
+        return [pred.data.cpu().numpy() for pred in preds]
+
+class AlphaChess(ChessModel):
+    name = "alpha_chess2"
     def __init__(self, embedding_size=128, num_filters=128):
         super(AlphaChess, self).__init__()
         # Block 0 - Square View
@@ -83,14 +119,47 @@ class AlphaChess(SLModel):
             x = F.relu(self.bn9(self.conv9(x)))
             x = F.relu(self.bn10(self.conv10(x)))
             x = J.flatten(x)
-            x = self.fc1(x)
-            x = self.fc2(x).view(1, -1) # 1 x N
-            x = J.softmax(x).view(-1) # N
-            out.append(x)
+            x = F.relu(self.fc1(x))
+            x = J.zero_center(self.fc2(x)).view(1, -1) # 1 x N
+            preds = J.softmax(x).view(-1), F.tanh(x).view(-1) # N
+            out.append(preds)
         return out # B x N_i
 
-    def cast_input_to_torch(self, x, volatile=False):
-        return [Variable(J.Tensor(x_sample), volatile=volatile) for x_sample in x]
+class SimpleModel(ChessModel):
+    name = "simple_model"
+    def __init__(self, hidden_layer=2048):
+        super(SimpleModel, self).__init__()
+        self.fc1 = nn.Linear(13 * 8 * 8 + 4, hidden_layer)
+        self.fc2 = nn.Linear(hidden_layer, hidden_layer)
+        self.fc3 = nn.Linear(hidden_layer, 1)
 
-    def cast_output_to_numpy(self, preds):
-        return [pred.data.cpu().numpy() for pred in preds]
+    def forward(self, x_boards):
+        out = []
+        for x in x_boards:
+            x = J.flatten(x)
+            x = F.relu(self.fc1(x))
+            x = F.relu(self.fc2(x))
+            x = J.zero_center(self.fc3(x)).view(1, -1) # 1 x N
+            preds = J.softmax(x).view(-1), F.tanh(x).view(-1) # N
+            out.append(preds)
+        return out # B x N_i
+
+class SimpleModel2(ChessModel):
+    name = "simple_model2"
+    def __init__(self, hidden_layers=[400, 200, 100]):
+        super(SimpleModel2, self).__init__()
+        self.fc1 = nn.Linear(13 * 8 * 8 + 4, hidden_layers[0])
+        self.fc2 = nn.Linear(hidden_layers[0], hidden_layers[1])
+        self.fc3 = nn.Linear(hidden_layers[1], hidden_layers[2])
+        self.fc4 = nn.Linear(hidden_layers[2], 1)
+
+    def forward(self, x_boards):
+        out = []
+        for x in x_boards:
+            x = F.relu(self.fc1(x))
+            x = F.relu(self.fc2(x))
+            x = F.relu(self.fc3(x))
+            x = J.zero_center(self.fc4(x)).view(1, -1) # 1 x N
+            preds = J.softmax(x).view(-1), F.tanh(x).view(-1)  # N
+            out.append(preds)
+        return out # B x N_i

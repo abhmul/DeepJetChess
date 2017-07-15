@@ -62,15 +62,16 @@ if __name__ == "__main__":
     SOURCE = os.getcwd()
     WORKING = os.path.join(SOURCE, '..')
     OUTPUT = os.path.join(WORKING, 'models')
-    for EPOCH_NUM in range(20):
-        MODEL_NAME = "alpha_chess2_epoch{}_weights.state".format(EPOCH_NUM)
-        # Setup the model
-        alpha_chess = AlphaChess()
-        player = Net(alpha_chess, name="AlphaChess")
-        print("Running Elo Test for %s" % player.name)
-        print("Loading the model: ", MODEL_NAME)
-        player.load_state(os.path.join(OUTPUT, MODEL_NAME))
-        print("Model Loaded!")
-        # for i in range(10):
-            # print("Trial %s" % i)
-        elo_test(player)
+    # for EPOCH_NUM in range(20):
+    MODEL_NAME = "PrevNet3.state"
+    # MODEL_NAME = "alpha_chess2_epoch{}_weights.state".format(EPOCH_NUM)
+    # Setup the model
+    alpha_chess = AlphaChess()
+    player = Net(alpha_chess, name="AlphaChess")
+    print("Running Elo Test for %s" % player.name)
+    print("Loading the model: ", MODEL_NAME)
+    player.load_state(os.path.join(OUTPUT, MODEL_NAME))
+    print("Model Loaded!")
+    # for i in range(10):
+        # print("Trial %s" % i)
+    elo_test(player)

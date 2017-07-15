@@ -26,7 +26,7 @@ def create_move(board, crdn):
             move.promotion = chess.QUEEN # always promote to queen
     return move
 
-def create_input(gn_children):
+def create_input(gn_children, flatten=True):
     np_legal_move_boards = np.empty((len(gn_children), 8, 8))
     model_input = np.zeros((len(gn_children), 8, 8, 17))
     for i, gn_child in enumerate(gn_children):
@@ -47,6 +47,13 @@ def create_input(gn_children):
             model_input[i, row, col, 16] = 1
     model_input[:, :, :, :12] = split_boards(np_legal_move_boards)
     return model_input
+
+def flatten_model_input(model_input):
+    flat_sample = np.zeros((model_input.shape[0], 8 * 8 * 13 + 4))
+    flat_sample[:, :8 * 8 * 12] = model_input[:, :12].reshape(model_input.shape[0], -1)
+    flat_sample[:, 8*8*12:8*8*13] = model_input[:, 16:].reshape(model_input.shape[0], -1)
+    flat_sample[:, -4:] = model_input[:, 12:16, 0, 0]
+    return flat_sample
 
 class Player(object):
     def move(self, gn_current):
@@ -78,6 +85,7 @@ class Net(Player):
             model_input = switch_input_sides(model_input)
         # Turn into pytorch format
         model_input = model_input.transpose(0, 3, 1, 2)
+        model_input = flatten_model_input(model_input)
         # Score the positions
         prob_dist = self.net.predict_on_batch([model_input])[0]
         # Print the top moves and their probs for logging
@@ -125,6 +133,7 @@ class Learner(Net):
             model_input = switch_input_sides(model_input)
         # Turn into pytorch format
         model_input = model_input.transpose(0, 3, 1, 2)
+        model_input = flatten_model_input(model_input)
         # Compute the forward and store the gradients
         torch_input = self.net.cast_input_to_torch([model_input])
         torch_preds = self.net(torch_input)
@@ -154,6 +163,7 @@ class Opponent(Net):
             model_input = switch_input_sides(model_input)
         # Turn into pytorch format
         model_input = model_input.transpose(0, 3, 1, 2)
+        model_input = flatten_model_input(model_input)
         # Compute the forward and store the gradients
         torch_input = self.net.cast_input_to_torch([model_input], volatile=True)
         torch_preds = self.net(torch_input)

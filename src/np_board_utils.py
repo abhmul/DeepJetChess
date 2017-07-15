@@ -24,10 +24,12 @@ def switch_castling_right_sides(castling_rights):
 def switch_to_moves(to_moves):
     return 1 - to_moves
 
-def switch_state_sides(boards, castling_rights, en_passants, to_moves):
+def switch_state_sides(boards, castling_rights, en_passants, to_moves=None):
     new_boards = switch_board_sides(boards)
     new_castling_rights = switch_castling_right_sides(castling_rights)
     new_en_passants = flip_inds(en_passants)
+    if to_moves is None:
+        return new_boards, new_castling_rights, new_en_passants
     new_to_moves = switch_to_moves(to_moves)
     return new_boards, new_castling_rights, new_en_passants, new_to_moves
 
