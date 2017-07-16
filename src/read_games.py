@@ -213,8 +213,8 @@ def parse_all_games(fname_out, parsers, pool=None, init_size=1e6, chunksize=100,
     parse = parallel_parse if pool is not None else sequential_parse
 
     # Estimated size is 91.6 GB
-    board_size = 40 * 35 * init_size # 35 is the avg number of legal moves per state
-    state_size = 40 * init_size # 40 is the avg number of moves per game
+    board_size = init_size # 40 * 35 * init_size # 35 is the avg number of legal moves per state
+    state_size = init_size # 40 * init_size # 40 is the avg number of moves per game
     game_size = init_size
 
     logging.info("Creating Dataset...")
@@ -243,7 +243,7 @@ def parse_all_games(fname_out, parsers, pool=None, init_size=1e6, chunksize=100,
             # logging.info("Consuming %d" % game_num)
             # Fill in the datasets
             # Resize the arrays if necessary
-            if game_num + 1 > game_size:
+            while game_num + 1 > game_size:
                 game_size *= 2
                 logging.info("Resizing Game Size to %s" % game_size)
                 [d.resize(size=game_size, axis=0) for d in (W, G_ind)]
@@ -251,7 +251,7 @@ def parse_all_games(fname_out, parsers, pool=None, init_size=1e6, chunksize=100,
             W[game_num] = game.winner
             G_ind[game_num] = state_num
             # Resize the arrays if necessary
-            if state_num + len(game.states) > state_size:
+            while state_num + len(game.states) > state_size:
                 state_size *= 2
                 logging.info("Resizing State Size to %s" % state_size)
                 [d.resize(size=state_size, axis=0) for d in (MM, S_ind)]
@@ -261,7 +261,7 @@ def parse_all_games(fname_out, parsers, pool=None, init_size=1e6, chunksize=100,
 
             for state in game.states:
                 # Resize the arrays if necessary
-                if board_num + len(state.legal_boards) > board_size:
+                while board_num + len(state.legal_boards) > board_size:
                     board_size *= 2
                     logging.info("Resizing Board Size to %s" % board_size)
                     [d.resize(size=board_size, axis=0) for d in (X, C, E)]
